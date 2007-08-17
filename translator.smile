@@ -1,0 +1,13 @@
+#!/usr/bin/env smile
+load "require.scm"
+require "parser.smile"
+
+with-input-from-file "stuff/test.smile"
+  ;third | program-arguments
+  lambda |
+    setup-lexer [current-input-port] #f
+    loop grande-lupe
+      var parsed | parse-line-or-eof
+        unless | eqv? parsed EOF
+          pretty-print parsed
+          grande-lupe

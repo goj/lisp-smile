@@ -1,0 +1,226 @@
+define lexer-error print
+
+; lexer setup:
+
+define *port*         *unspecified*
+define *indentation*  *unspecified*
+define *empty-line*   *unspecified*
+define *interactive*  *unspecified*
+define *braces*       *unspecified*
+define *token-buffer* *unspecified*
+
+define | setup-lexer port interactive
+  set! *port*         port
+  set! *interactive*  interactive
+  reset-lexer
+
+define | reset-lexer
+  set! *indentation*  '(0)
+  set! *empty-line*    #t
+  set! *braces*       '()
+  set! *token-buffer* | make-q
+
+define | make-char-set-predicate char-set
+  lambda | chr
+    char-set-contains? char-set chr
+
+define | read-token
+    define ignored
+        char-set #\space #\tab
+
+    define separators
+      char-set-union
+        apply char-set | map first *brace-tokens*
+        char-set #\space #\newline #\tab #\"
+
+    define | separator? chr
+      char-set-contains? separators chr
+
+    define | read-until-predicate pred result
+      var chr | read-char *port*
+        if | pred chr
+          begin
+            unread-char chr *port*
+            reverse-list->string result
+          read-until-predicate pred | cons chr result
+
+    define | string->thing str
+      cond
+        [ assoc str *token-strings* ] => second
+        else
+            read | open-input-string str
+
+    define | open-parenthesis type
+      set! *braces* | cons type *braces*
+      
+    define | close-parenthesis type
+      cond
+        :| null? *braces*
+           lexer-error "unexcepted closing brace"
+        :| eq? type | car *braces*
+           set! *braces* | cdr *braces*
+        else
+           lexer-error "incompatible braces"
+
+    define | on-flat?
+      or
+        not *empty-line*
+        null? *braces*
+
+    define | read-slash
+      var chr | read-char *port*
+        cond
+          :| char-set-contains? ignored chr
+             read-slash
+          :| char=? chr #\newline
+             eat-whitespace
+          else
+             unread-char chr *port*
+             start-new-line
+    
+    define | read-string
+      unread-char #\" *port*
+      read *port*
+
+    define | read-real-token chr
+      set! *empty-line* #f
+      cond
+        :| char=? chr #\#
+           unread-char #\# *port*
+           read *port*
+        :| char=? chr #\"
+           read-string
+        :| char=? chr #\\
+           read-slash
+        :| char=? chr #\'
+           . SINGLE_QUOTE
+        :| char=? chr #\,
+           var tmp | read-char *port*
+             if | char=? tmp #\@
+              . COMMA_AT
+              begin
+                unread-char tmp *port*
+                . COMMA
+        [ assoc chr *brace-tokens* ] =>
+          lambda | spec
+            bind spec | chr token type open
+              if open
+                open-parenthesis type
+                close-parenthesis type
+              . token
+        else
+          string->thing
+            read-until-predicate separator? | list chr
+
+    define | do-at-eof
+      unless *empty-line*
+        enq! *token-buffer* ENDLINE
+      repeat [1- | length *indentation*] times
+        enq! *token-buffer* DEDENT
+      enq! *token-buffer* EOF
+      set! *indentation* '(1)
+      deq! *token-buffer*
+
+    define | start-new-line
+      if *empty-line*
+        eat-whitespace
+        begin
+          loop position
+            var chr | read-char *port*
+              cond
+                :| eof-object? chr
+                   do-at-eof
+                :| char-set-contains? ignored chr
+                   position
+                :| and
+                     char=? chr #\newline
+                     = 0 | port-column *port*
+                     . *interactive*
+                   do-at-eof
+                else
+                  unread-char chr *port*
+                  set! *empty-line* #t
+                  var col | port-column *port*
+                    cond
+                      [ > col | first *indentation* ]
+                        set! *indentation* | cons col *indentation*
+                        enq! *token-buffer* INDENT
+                      [ member col *indentation* ] =>
+                        lambda | whats-left
+                          let :| prev-len | length *indentation*
+                                 curr-len | length whats-left
+                              set! *indentation* whats-left
+                              do :| countdown
+                                      - prev-len curr-len
+                                      1- countdown
+                                 :| = countdown 0
+                                 enq! *token-buffer* DEDENT
+                      else
+                        lexer-error "bad indentation" col *indentation*
+                  . ENDLINE
+
+    define | read-part
+      var chr '_
+        loop pre-loop
+          set! chr | read-char *port*
+          when | char-whitespace? chr
+            pre-loop
+        let loop
+          :| result | list chr
+          set! chr | read-char *port*
+          if | char-whitespace? chr
+            reverse-list->string result
+            loop | cons chr result
+
+    define | eat-whitespace
+      define | ignore-comment
+        do :| tmp #\_ | read-char *port*
+           :| char=? tmp #\newline
+              unread-char tmp *port*
+              eat-whitespace
+           . 'do-nothing
+      var chr | read-char *port*
+        if | eof-object? chr
+          do-at-eof
+          case chr
+            [ #\space #\tab ]
+              eat-whitespace
+            [ #\newline ]
+              if | on-flat?
+                start-new-line
+                eat-whitespace
+            [ #\; ]
+              ignore-comment
+            [ #\# ]
+              var chr2 | read-char *port*
+                case chr2
+                  [ #\! ]
+                    ignore-comment
+                  [ #\| ]
+                    let read-comment
+                      :| depth 1
+                      var current | read-part
+                        cond
+                          :| string=? current "#|"
+                             read-comment | 1+ depth
+                          :| string=? current "|#"
+                             if | = depth 1
+                               eat-whitespace
+                               read-comment | 1- depth
+                          else
+                             read-comment depth
+                  else
+                    unread-char chr2 *port*
+                    read-real-token chr
+            else
+              read-real-token chr
+
+    ; procedure body
+    if | q-empty? *token-buffer*
+      eat-whitespace
+      deq! *token-buffer*
+
+define | unread-token tkn
+  q-push! *token-buffer* tkn
+
+

@@ -1,0 +1,46 @@
+#!/usr/bin/env smile
+display "Please wait..."
+load "require.scm"
+require "parser.smile"
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+define true-read-token read-token
+define tmp-token-queue | make-q
+define | read-token
+  if | q-empty? tmp-token-queue
+    . EOF
+    deq! tmp-token-queue
+define | unread-token tkn
+  q-push! tmp-token-queue tkn
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+print ". system ready!"
+setup-lexer [readline-port] #t
+set-readline-prompt! ">>> " "... "
+
+define r5rs | interaction-environment
+loop grande-lupe
+  set-buffered-input-continuation?! *port* #f
+  var tokens | make-q
+    loop reader
+      var tmp | true-read-token
+        unless | eqv? EOF tmp
+          enq! tokens tmp
+          reader
+    var lst | q->list tokens
+      unless | null? lst
+        display " lexed: "
+        output-delimited write " " lst
+        newline
+        ; parser test here
+        reset-lexer
+        for-each unread-token | reverse lst
+        var parsed | parse-line
+          pretty-print parsed #:per-line-prefix "parsed: "
+          var result | eval parsed r5rs
+            pretty-print result #:per-line-prefix "evaled: "
+        ; end of parser test
+        reset-lexer
+        grande-lupe
+        
+print "bye!"

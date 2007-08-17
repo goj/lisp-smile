@@ -1,5 +1,4 @@
 #!/usr/bin/env smile
-display "Please wait"
 load "require.scm"
 
 use-modules
@@ -13,9 +12,8 @@ use-modules
   ice-9 q
   ice-9 format
 
-display #\.
 require "stdlib.smile"
-display #\.
+require "lexer.smile"
 
 define-class <token> |
   type
@@ -37,242 +35,231 @@ define-macro | register-token . lst
           define ,tkn
             make <token> ,str
 
+;; special token --- token which is not a datum
+define | special-token? x
+  is-a? x <token>
+define | datum? x
+  not | special-token? x
+
 register-token INDENT DEDENT ENDLINE
-register-token DOT BAR
+register-token DOT BAR BAR_BAR BAR_BAR_BAR
 register-token SINGLE_QUOTE COMMA COMMA_AT
 register-token OPEN_PAREN CLOSE_PAREN
 register-token OPEN_BRACKET CLOSE_BRACKET
 
 register-token EOF WRONG ; quasi-tokens
 
+define | parser-error . args
+  ;error | string-join " " args
+  apply print
+    cons "parser error:" args
+
 define *brace-tokens*
   quasiquote
     :| ;symbol token      shape  open
-       #\( ,OPEN_PAREN    ROUND  #t
-       #\) ,CLOSE_PAREN   ROUND  #f
-       #\[ ,OPEN_BRACKET  SQUARE #t
-       #\] ,CLOSE_BRACKET SQUARE #f
+      #\( ,OPEN_PAREN    ROUND  #t
+      #\) ,CLOSE_PAREN   ROUND  #f
+      #\[ ,OPEN_BRACKET  SQUARE #t
+      #\] ,CLOSE_BRACKET SQUARE #f
 
 define *token-strings*
   quasiquote
     :| ;symbol token
-       "."  ,DOT
-       "|"  ,BAR
-       "|>" ,INDENT
-       "<|" ,DEDENT
-       "||" ,ENDLINE
+      "."   ,DOT
+      "|"   ,BAR
+      "||"  ,BAR_BAR
+      "|||" ,BAR_BAR_BAR
+      ; odd ones
+      ; "{"  ,INDENT
+      ; "}"  ,DEDENT
+      ; "{}" ,ENDLINE
 
-; lexer setup:
-define *port*         *unspecified*
-define *indentation*  *unspecified*
-define *empty-line*   *unspecified*
-define *interactive*  *unspecified*
-define *braces*       *unspecified*
-define *token-buffer* *unspecified*
+define *grammar*
+  quote
+    :|
+      line
+        flat ENDLINE
+        flat ENDLINE INDENT list-of-lines DEDENT
+        ENDLINE INDENT list-of-lines DEDENT
+        flat DOT element ENDLINE
+        DOT element ENDLINE
+      list-of-lines
+        line list-of-lines
+        line
+      flat
+        flat-el flat
+        flat-el
+      flat-el
+        BAR
+        BAR_BAR
+        BAR_BAR_BAR
+        element
+      element
+        DATUM ; token which is not <token>, eg. symbol, number
+        s-expression
+      s-expression
+        OPEN_BRACKET flat CLOSE_BRACKET
+        OPEN_BRACKET flat DOT element CLOSE_BRACKET
+        OPEN_BRACKET CLOSE_BRACKET
+        OPEN_PAREN CLOSE_PAREN
+        ; maybe more with parens in future
 
-define | setup-lexer port interactive
-  set! *port*         port
-  set! *interactive*  interactive
-  set! *indentation*  '(1)
-  set! *empty-line*    #t
-  set! *interactive*   #t
-  set! *braces*       '()
-  set! *token-buffer* | make-q
+define-macro | make-makers name . lst ; tmp
+  cons 'begin
+    calc-for i in lst
+      var proc-name | string->symbol | string-append name | symbol->string i
+        quasiquote
+          define | ,proc-name . args
+            print "called" (quote ,proc-name) args
+            quote ,proc-name
 
-define | read-token
-    define ignored
-        char-set #\space #\tab
-
-    define separators
-      char-set-union
-        apply char-set | map first *brace-tokens*
-        char-set #\space #\newline #\tab #\"
-
-    define | separator? chr
-      char-set-contains? separators chr
-
-    define | read-until-predicate pred result
-      var chr | read-char *port*
-        if | pred chr
-          begin
-            unread-char chr *port*
-            reverse-list->string result
-          read-until-predicate pred | cons chr result
-
-    define | read-hash
-      var chr | read-char *port*
-        case chr
-          [ #\! ]
-            read-line *port*
-            read-token
-          [ #\| ]
-            let read-comment
-              :| depth 1
-              var current | read-delimited " \n\t" *port*
-                cond
-                  :| string=? current "#|"
-                     read-comment | 1+ depth
-                  :| string=? current "|#"
-                     if | = depth 1
-                       read-token
-                       read-comment | 1- depth
-                  else
-                     read-comment depth
-          else
-            unread-char chr *port*
-            unread-char #\# *port*
-            read *port*
-
-    define | string->thing str
-      cond
-        [ assoc str *token-strings* ] => second
-        else
-            read | open-input-string str
-
-    define | open-parenthesis type
-      set! *braces* | cons type *braces*
-      
-    define | close-parenthesis type
-      cond
-        :| null? *braces*
-           error "unexcepted closing brace"
-        :| eq? type | car *braces*
-           set! *braces* | cdr *braces*
-        else
-           error "incompatible braces"
-
-    define | on-flat?
-      or
-        not *empty-line*
-        null? *braces*
-
-    define | read-slash
-      var chr | read-char *port*
-        cond
-          :| char-set-contains? ignored chr
-             read-slash
-          :| char=? chr #\newline
-             eat-whitespace
-          else
-             unread-char chr *port*
-             start-new-line
+define-macro | make-all-makers
+  var names | map first *grammar*
+    cons 'begin
+      list
+        cons 'make-makers | cons "make-" names
+        cons 'make-makers | cons "parse-" names
     
-    define | read-string
-      unread-char #\" *port*
-      read *port*
+make-all-makers
 
-    define | read-real-token chr
-      set! *empty-line* #f
-      cond
-        :| char=? chr #\#
-           read-hash
-        :| char=? chr #\"
-           read-string
-        :| char=? chr #\\
-           read-slash
-        :| char=? chr #\'
-           . SINGLE_QUOTE
-        :| char=? chr #\,
-           var tmp | read-char *port*
-             if | char=? tmp #\@
-              . COMMA_AT
-              begin
-                unread-char tmp *port*
-                . COMMA
-        [ assoc chr *brace-tokens* ] =>
-          lambda | spec
-            bind spec | chr token type open
-              if open
-                open-parenthesis type
-                close-parenthesis type
-              . token
-        else
-          string->thing
-            read-until-predicate separator? | list chr
+define | wrong? x
+  eqv? WRONG x
 
-    define | do-at-eof
-      for i in | cdr *indentation*
-        enq! *token-buffer* DEDENT
-      set! *indentation* '(1)
-      enq! *token-buffer* EOF
-      deq! *token-buffer*
+define | eat-token tkn
+  var eaten | read-token
+    unless | eqv? tkn eaten
+      parser-error "excepting" tkn "but" eaten "encountered"
 
-    define | start-new-line
-      if *empty-line*
-        eat-whitespace
-        begin
-          set! *empty-line* #t
-          loop position
-            var chr | read-char *port*
-              cond
-                :| eof-object? chr
-                   do-at-eof
-                :| char-set-contains? ignored chr
-                   position
-                :| and
-                     char=? chr #\newline
-                     = 0 | port-column *port*
-                     . *interactive*
-                   do-at-eof
-                else
-                  var col | port-column *port*
-                    unread-char chr *port*
-                    cond
-                      [ > col | first *indentation* ]
-                        set! *indentation* | cons col *indentation*
-                        . INDENT
-                      [ = col | first *indentation* ] ENDLINE
-                      [ member col *indentation* ] =>
-                        lambda | whats-left
-                          let :| prev-len | length *indentation*
-                                 curr-len | length whats-left
-                              set! *indentation* whats-left
-                              do :| countdown
-                                      - prev-len curr-len 1
-                                      1- countdown
-                                 :| = countdown 0
-                                    . DEDENT
-                                 enq! *token-buffer* DEDENT
-                      else
-                        error "bad indentation"
+define | parse-line-or-eof
+  var line | parse-line
+    if | wrong? line
+      var tkn | read-token
+        if | eqv? EOF tkn
+          . EOF
+          begin
+            unread-token tkn
+            . WRONG
+      . line
 
-    define | eat-whitespace
-      var chr | read-char *port*
-        if | eof-object? chr
-          do-at-eof
-          case chr
-            [ #\space #\tab ]
-              eat-whitespace
-            [ #\newline ]
-              if | on-flat?
-                start-new-line
-                eat-whitespace
+define | parse-line
+  ;;; print "called parse-line"
+  var tkn | read-token
+    cond
+      [ eqv? DOT tkn ]
+        parse-element
+      [ eqv? ENDLINE tkn ]
+        eat-token INDENT
+        var tmp | parse-list-of-lines
+          eat-token DEDENT
+          . tmp
+      else
+        unread-token tkn
+        let
+          :|  flat | parse-flat
+              next | read-token
+          cond
+            :| wrong? flat
+               unread-token next
+               . WRONG
+            :| eqv? next DOT
+               var el | force-element
+                eat-token ENDLINE
+                append flat el
+            :| eqv? next ENDLINE
+               set! next | read-token
+               if | eqv? next INDENT
+                 var lol | parse-list-of-lines
+                   eat-token DEDENT
+                   append flat lol
+                 begin
+                   unread-token next
+                   . flat
             else
-               read-real-token chr
+              parser-error "line-parser WOOT @" next
 
-    ; procedure body
-    if | q-empty? *token-buffer*
-      eat-whitespace
-      deq! *token-buffer*
+define | force-element
+  ;;; print "called force-element"
+  var tmp | parse-element
+    when | wrong? tmp
+      parser-error "element excepted"
+    . tmp
+  
+define | parse-element
+  ;;; print "called parse-element"
+  var tkn | read-token
+    cond
+      [ eqv? OPEN_BRACKET tkn ]
+        let
+          :| tmp   | parse-flat
+             after | read-token
+          cond
+            :| eqv? after DOT
+               var el | force-element
+                eat-token CLOSE_BRACKET
+                append tmp el
+            :| eqv? after CLOSE_BRACKET
+               if [wrong? tmp] '() tmp
+            else
+               parser-error "unexcepted" after "when line parsing"
+      [ datum? tkn ] tkn
+      else
+        unread-token tkn
+        ;;; print " wrong token:" tkn
+        . WRONG
+
+define | kleene-star proc
+  var q | make-q
+    loop read-them
+      var tmp | proc
+        unless | wrong? tmp
+          enq! q tmp
+          ;;; print " enqueued" tmp
+          read-them
+    q->list q
+
+define | kleene-plus proc
+  var lst | kleene-star proc
+    if [ null? lst ] WRONG lst
+  
+define | parse-flat-el
+  ;;; print "called parse-flat-el"
+  var tmp | read-token
+    if | member tmp | list BAR BAR_BAR BAR_BAR_BAR
+      . tmp
+      begin
+        unread-token tmp
+        parse-element
+
+define | parse-flat
+  ;;; print "called parse-flat"
+  var flat-el+ | kleene-plus parse-flat-el
+    if | wrong? flat-el+
+      . WRONG
+      var lst | cons 'sentinel flat-el+
+        let repair
+          :| elem lst
+          ;;; print "called repair-flat"
+          if | null? | cdr elem
+            cdr lst
+            var tmp | second elem
+              cond
+                :| eqv? BAR tmp
+                   set-cdr! elem | list | cddr elem
+                   repair | cadr elem
+                :| eqv? BAR_BAR tmp
+                   set-cdr! elem | list | list | cddr elem
+                   repair | caadr elem
+                :| eqv? BAR_BAR_BAR tmp
+                   set-cdr! elem | list | list | list | cddr elem
+                   repair | caaadr elem
+                else
+                   repair | cdr elem
 
 
-print ". system ready!"
-set-readline-prompt! ">>> " "... "
-setup-lexer [readline-port] #t
-loop grande-lupe
-  set-buffered-input-continuation?! *port* #f
-  var tokens | make-q
-    loop reader
-      var tmp | read-token
-        unless | eqv? EOF tmp
-          enq! tokens tmp
-          reader
-    var lst | q->list tokens
-      unless | null? lst
-        for tkn in lst
-          write tkn
-          display " "
-        newline
-        grande-lupe
-        
-print "bye!"
+define | parse-element+
+  ;;; print "called parse-element+"
+  kleene-plus parse-element
+    
+define | parse-list-of-lines
+  ;;; print "called parse-list-of-lines"
+  kleene-plus parse-line

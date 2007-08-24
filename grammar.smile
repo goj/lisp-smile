@@ -1,0 +1,48 @@
+define *grammar*
+  quote
+    \\
+      line
+        DOT element ENDLINE
+        ENDLINE INDENT list-of-lines DEDENT
+        list-inside ENDLINE
+        list-inside ENDLINE INDENT list-of-lines DEDENT
+      list-of-lines
+        line list-of-lines
+        line
+      list-inside
+        [flat-el]+
+        [flat-el]+ DOT element
+      flat-el
+        BAR
+        BAR_BAR
+        BAR_BAR_BAR
+        element
+      element
+        DATUM ; token which is not <token>, eg. symbol, number
+        s-expression
+      s-expression
+        OPEN_BRACKET list-inside CLOSE_BRACKET
+        OPEN_BRACKET list-inside CLOSE_BRACKET
+        OPEN_BRACKET CLOSE_BRACKET
+        ; maybe more with parens...
+        OPEN_PAREN list-inside CLOSE_PAREN
+        OPEN_PAREN list-inside CLOSE_PAREN
+        OPEN_PAREN CLOSE_PAREN
+
+define-macro | make-makers name . lst ; tmp
+  cons 'begin
+    calc-for i in lst
+      var proc-name | string->symbol | string-append name | symbol->string i
+        quasiquote
+          define | ,proc-name . args
+            print "called" [quote ,proc-name] args
+            quote ,proc-name
+
+define-macro | make-all-makers
+  var names | map first *grammar*
+    cons 'begin
+      list
+        cons 'make-makers | cons "make-" names
+        cons 'make-makers | cons "parse-" names
+    
+make-all-makers

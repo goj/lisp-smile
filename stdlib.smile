@@ -1,59 +1,38 @@
-use-modules
-  ice-9 syncase
-  ice-9 q
-
-define | require file
-  let*
-    :|
-      dot-pos   | string-rindex file #\.
-      base-name | substring file 0 dot-pos
-      scm-name  | string-append base-name ".scm"
-    system
-      string-append "translate-smile " file " > " scm-name
-    load scm-name
-
 define-syntax var
   lambda | x
     syntax-case x |
-      :| 
-        _ name binding a b ...
+      \ _ name binding a b ...
         syntax
           let ((name binding)) a b ...
 
 define-syntax loop
   lambda | x
     syntax-case x |
-      :| 
-        _ name a b ...
+      \ _ name a b ...
         syntax
           let name () a b ...
 
 define-syntax for
   lambda | x
     syntax-case x | in from to
-      :|
-        _ i from a to b c1 c2 ...
+      \ _ i from a to b c1 c2 ...
         syntax
-          let req
-            :| i a
+          let req || i a
             if | <= i b
                begin c1 c2 ...
                      req | 1+ i
-      :|
-        _ i in lst c1 c2 ...
+      \ _ i in lst c1 c2 ...
         syntax
           for-each
             lambda [i] c1 c2 ...
             . lst
-      :|
-        _ i j in lst1 lst2 c1 c2 ...
+      \ _ i j in lst1 lst2 c1 c2 ...
         syntax
           for-each
             lambda [i j] c1 c2 ...
             . lst1
             . lst2
-      :|
-        _ i j k in lst1 lst2 lst3 c1 c2 ...
+      \ _ i j k in lst1 lst2 lst3 c1 c2 ...
         syntax
           for-each
             lambda [i j k] c1 c2 ...
@@ -65,25 +44,21 @@ define-syntax for
 define-syntax calc-for
   lambda | x
     syntax-case x | in from to
-      :|
-        _ i from a to b c1 c2 ...
+      \ _ i from a to b c1 c2 ...
         syntax
           calc-for i in [list-range a b] c1 c2 ...
-      :|
-        _ i in lst c1 c2 ...
+      \ _ i in lst c1 c2 ...
         syntax
           map
             lambda [i] c1 c2 ...
             . lst
-      :|
-        _ i j in lst1 lst2 c1 c2 ...
+      \ _ i j in lst1 lst2 c1 c2 ...
         syntax
           map
             lambda [i j] c1 c2 ...
             . lst1
             . lst2
-      :|
-        _ i j k in lst1 lst2 lst3 c1 c2 ...
+      \ _ i j k in lst1 lst2 lst3 c1 c2 ...
         syntax
           map
             lambda [i j k] c1 c2 ...
@@ -94,11 +69,9 @@ define-syntax calc-for
 define-syntax repeat
   lambda | x
     syntax-case x | times
-      :|
-        _ count times c1 c2 ...
+      \ _ count times c1 c2 ...
         syntax
-          let req
-            :| n count
+          let req || n count
             unless | zero? n
               begin c1 c2 ...
               req | 1- n
@@ -121,8 +94,7 @@ define | any-fn? pred lst
 define-syntax all?
   lambda | x
     syntax-case x | in
-      :|
-        _ i in lst c1 c2 ...
+      \ _ i in lst c1 c2 ...
         syntax
           all-fn?
             lambda [i] c1 c2 ...
@@ -131,8 +103,7 @@ define-syntax all?
 define-syntax any?
   lambda | x
     syntax-case x | in
-      :|
-        _ i in lst c1 c2 ...
+      \ _ i in lst c1 c2 ...
         syntax
           all-fn?
             lambda [i] c1 c2 ...
@@ -141,8 +112,7 @@ define-syntax any?
 define-syntax when
   lambda | x
     syntax-case x |
-      :|
-        _ cnd c1 c2 ...
+      \ _ cnd c1 c2 ...
         syntax
           if cnd
             begin c1 c2 ...
@@ -150,8 +120,7 @@ define-syntax when
 define-syntax unless
   lambda | x
     syntax-case x |
-      :|
-        _ cnd c1 c2 ...
+      \ _ cnd c1 c2 ...
         syntax
           if | not cnd
             begin c1 c2 ...
@@ -159,22 +128,19 @@ define-syntax unless
 define-syntax bind
   lambda | x
     syntax-case x |
-      :|
-        _ name (a) b c ...
+      \ _ name (a) b c ...
         syntax
           var a | car name
             begin b c ...
-      :|
-        _ name (a b c ...) d e ...
+      \ _ name (a b c ...) d e ...
         syntax
-          let :| a   | car name
+          let \\ a   | car name
                  tmp | cdr name
-              bind tmp (b c ...) d e ...
+               bind tmp (b c ...) d e ...
 
 define | output-delimited func delim args
   unless | null? args
-    let req
-      :| args args
+    let req || args args
       func | car args
       var tail | cdr args
         unless | null? tail
@@ -192,13 +158,13 @@ define rest cdr
 
 define | cl-car x
   if | null? x
-    '()
+    . '()
     car x
 
 define | cl-cdr x
   if | null? x
-    '()
-    car x
+    . '()
+    cdr x
 
 define | range a b
   make-stream
@@ -210,8 +176,7 @@ define | range a b
 
 define | list-range a b
   var q | make-q
-    let loop
-      :| state a
+    let loop || state a
       if | <= state b
         enq! state
         q->list q

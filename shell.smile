@@ -1,7 +1,7 @@
 #!/usr/bin/env smile
 display "Please wait..."
-load "require.scm"
-require "parser.smile"
+load "load-smile.scm"
+load-smile "smile.smile"
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 define true-read-token read-token
@@ -35,10 +35,10 @@ loop grande-lupe
         ; parser test here
         reset-lexer
         for-each unread-token | reverse lst
-        var parsed | parse-line
+        var parsed | parse
           pretty-print parsed #:per-line-prefix "parsed: "
-          var result | eval parsed r5rs
-            pretty-print result #:per-line-prefix "evaled: "
+          ;var result | eval parsed r5rs
+          ;  pretty-print result #:per-line-prefix "evaled: "
         ; end of parser test
         reset-lexer
         grande-lupe

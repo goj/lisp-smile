@@ -1,0 +1,12 @@
+use-modules
+  oop goops
+  srfi srfi-1 ; list library
+  srfi srfi-34 ; exceptions
+  ice-9 pretty-print
+  ice-9 rdelim
+  ice-9 readline
+  ice-9 buffered-input
+  ice-9 streams
+  ice-9 q
+  ice-9 format
+  ice-9 syncase

@@ -1,6 +1,5 @@
 #!/usr/bin/env smile
-load "load-smile.scm"
-load-smile "smile.smile"
+load "smile.scm"
 
 define | translate
   setup-lexer [current-input-port] #f

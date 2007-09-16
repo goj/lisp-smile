@@ -22,7 +22,7 @@ define-syntax loop
 
 define-macro | gensyms a . rest
   quasiquote
-    let*
+    let
       unquote
         calc-for i in a
           list i '(gensym)
@@ -41,72 +41,45 @@ define-method | for-each fn [s1 <promise>] [s2 <promise>] [s3 <promise>]
   stream-for-each fn s1 s2 s3
 
 define-method | for-each fn [s1 <hashtable>]
-  hash-for-each [lambda [x y] | fn [cons x y]] s1
+  hash-for-each [lambda [x y] | fn | cons x y] s1
 
 define-macro | calc-for . x
   append '(loop map) x
 
-define-syntax do-times
-  lambda | x
-    syntax-case x |
-      \ _ count c1 c2 ...
-        syntax
-          let req || n count
-            when | > n 0
-              begin c1 c2 ...
-              req | 1- n
+define-macro | simple-syntax header . body
+  let 
+    \ name     | car header
+      bindings | cdr header
+    gensyms | x
+      quasiquote
+        define-syntax ,name
+          lambda | ,x
+            syntax-case ,x |
+              \ _ ,@bindings
+                syntax ,@body
 
-define | all? pred lst
-  cond
-    [ null? lst ] #t
-    [ pred | first lst ]
-      all? pred | rest lst
-    else #f
+simple-syntax | do-times count c1 c2 ...
+  let req || n count
+    when | > n 0
+      begin c1 c2 ...
+      req | 1- n
 
-define | any? pred lst
-  cond
-    [ null? lst ] #f
-    [ pred | first lst ]
-      #t
-    else
-      any? pred | rest lst
+simple-syntax | when cnd c1 c2 ...
+  if cnd
+    begin c1 c2 ...
+    . *unspecified*
 
-define-syntax when
-  lambda | x
-    syntax-case x |
-      \ _ cnd c1 c2 ...
-        syntax
-          if cnd
-            begin c1 c2 ...
+simple-syntax | unless cnd c1 c2 ...
+  if cnd
+    . *unspecified*
+    begin c1 c2 ...
 
-define-syntax unless
-  lambda | x
-    syntax-case x |
-      \ _ cnd c1 c2 ...
-        syntax
-          if | not cnd
-            begin c1 c2 ...
+simple-syntax | bind lst (a b ...) c d ...
+  receive (a b ...) (apply values lst) c d ...
 
-define-syntax bind
-  lambda | x
-    syntax-case x |
-      \ _ name (a) b c ...
-        syntax
-          let || a | car name
-            begin b c ...
-      \ _ name (a b c ...) d e ...
-        syntax
-          let \\ a   | car name
-                 tmp | cdr name
-               bind tmp (b c ...) d e ...
-
-define-syntax lambda-bind
-  lambda | x
-    syntax-case x |
-      \ _ (a b ...) c d ...
-        syntax
-          lambda | tmp
-            bind tmp (a b ...) c d ...
+simple-syntax | lambda-bind (a b ...) c d ...
+  lambda | tmp
+    bind tmp (a b ...) c d ...
 
 define | output-delimited func delim args
   unless | null? args
@@ -116,20 +89,22 @@ define | output-delimited func delim args
         unless | null? tail
           display delim
           req tail
-  
-define* | print #:key [before ""] [delim " "] [after "\n"] #:rest args
-  display before
+
+define | positional-only args
   let || tmp | make-q
     let req || args args
       cond
         \ null? args
-          output-delimited display delim
-            q->list tmp
+          q->list tmp
         \ member [car args] '[ #:before #:delim #:after ] eq?
-          req | cl-c___r dd args
+          req | cl-cddr args
         else
           enq! tmp | car args
           req | cdr args
+  
+define* | print #:key [before ""] [delim " "] [after "\n"] #:rest args
+  display before
+  output-delimited display delim | positional-only args
   display after
 
 
@@ -175,7 +150,7 @@ define-macro | define-cl-c___rs a b
             full-name | symbol-append 'cl-c symbol 'r
           enq! result
             quasiquote
-              define-macro | ,full-name __x__
+              define | ,full-name __x__
                 cl-c___r ,symbol __x__
       when | < level b
         req [1+ level] [string-append str "a"]

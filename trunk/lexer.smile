@@ -124,12 +124,11 @@ define | read-token lexer
                unread-char tmp port
                . COMMA
         [ assoc chr *brace-tokens* ] =>
-          lambda | spec
-            bind spec | chr token type open
-              if open
-                open-parenthesis type
-                close-parenthesis type
-              . token
+          lambda-bind | chr token type open
+            if open
+              open-parenthesis type
+              close-parenthesis type
+            . token
         else
           string->thing
             read-until-predicate separator? | list chr

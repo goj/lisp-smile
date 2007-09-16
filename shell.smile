@@ -1,13 +1,35 @@
 load "smile.scm"
 
-setup-lexer [readline-port] #t
+define *parser* | setup-parser [readline-port] #t
 set-readline-prompt! ">>> " "... "
 define r5rs | interaction-environment
 define *verbose* #f
 
+let grande-lupe ()
+  unless
+    eqv? EOF
+      catch #t
+        lambda |
+          reset-lexer *parser*
+          set-buffered-input-continuation?! [readline-port] #f
+          let || parsed | parse *parser*
+            if | eqv? EOF parsed
+              . EOF
+              let || result | eval parsed r5rs
+                unless | eq? *unspecified* result
+                  pretty-print result
+                . result
+        lambda | key . args
+          print "ERROR:" key args
+    grande-lupe
+      
+print "bye!"
+
+#|
 if *verbose*
   begin
-    define true-read-token read-token
+    define | true-read-token
+      read-token *parser*
     define tmp-token-queue | make-q
     define | read-token
       if | q-empty? tmp-token-queue
@@ -15,42 +37,28 @@ if *verbose*
         deq! tmp-token-queue
     define | unread-token tkn
       q-push! tmp-token-queue tkn
-    loop verbose-grande-lupe
-      set-buffered-input-continuation?! *port* #f
-      var tokens | make-q
-        loop reader
-          var tmp | true-read-token
+    let verbose-grande-lupe ()
+      set-buffered-input-continuation?! [readline-port] #f
+      let || tokens | make-q
+        let reader ()
+          let || tmp | true-read-token
             unless | eqv? EOF tmp
               enq! tokens tmp
               reader
-        var lst | q->list tokens
+        let || lst | q->list tokens
           unless | null? lst
             display " lexed: "
             output-delimited write " " lst
             newline
-            reset-lexer
+            reset-lexer *parser*
             for-each unread-token | reverse lst
-            var parsed | parse
+            let || parsed | parse *parser*
               pretty-print parsed #:per-line-prefix "parsed: "
-              var result | eval parsed r5rs
+              let || result | eval parsed r5rs
                 unless | eq? *unspecified* result
                   pretty-print result #:per-line-prefix "evaled: "
             ; end of parser test
-      reset-lexer
+      reset-lexer *parser*
       verbose-grande-lupe
+      |#
   ; not verbose
-  loop grande-lupe
-    catch #t
-      lambda |
-        reset-lexer
-        set-buffered-input-continuation?! *port* #f
-        var parsed | parse
-          unless | eqv? EOF parsed
-            var result | eval parsed r5rs
-              unless | eq? *unspecified* result
-                pretty-print result
-      lambda | key . args
-        print "ERROR:" key args
-    grande-lupe
-        
-print "bye!"

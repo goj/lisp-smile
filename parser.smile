@@ -13,7 +13,7 @@ define-method | write [tkn <token>] [port <port>]
 define-macro | register-token . lst
   cons 'begin
     calc-for tkn in lst
-      var str | symbol->string tkn
+      let || str | symbol->string tkn
         quasiquote
           define ,tkn
             make <token> ,str
@@ -26,23 +26,24 @@ define | datum? x
 
 register-token INDENT DEDENT ENDLINE
 register-token DOT BAR BAR_BAR BAR_BAR_BAR
+register-token AMP_DOT AMP AMP_AMP AMP_AMP_AMP
 register-token SINGLE_QUOTE COMMA COMMA_AT
 register-token OPEN_PAREN CLOSE_PAREN
 register-token OPEN_BRACKET CLOSE_BRACKET
 
 register-token EOF WRONG ; quasi-tokens
 
-define | parser-error . args
+define | parser-error parser . args
   define | str arg
     format #f "~a" arg
-  raise
-    list 'parser-error
-      string-join [map str args] " "
-      cons
-        port-line   *port*
-        port-column *port*
-      read-token
-      read-line
+  let || port | slot-ref parser 'port
+    raise
+      list 'parser-error
+        string-join [map str args] " "
+        cons
+          port-line   port
+          port-column port
+        read-line port
 
 define *brace-tokens*
   quasiquote
@@ -56,6 +57,10 @@ define *token-strings*
   quasiquote
     ; symbol   token
     \ "."      ,DOT
+      "&."     ,AMP_DOT
+      "&"      ,AMP
+      "&&"     ,AMP_AMP
+      "&&&"    ,AMP_AMP_AMP
       "|"      ,BAR
       "||"     ,BAR_BAR
       "|||"    ,BAR_BAR_BAR
@@ -67,143 +72,163 @@ define *quotation-tokens*
     list COMMA        'unquote
     list COMMA_AT     'unquote-splicing
 
-define | parse
-  define | true-procedure-body
-    var part | parse-or-allow parse-line EOF
-      if | wrong? part
-        parser-error "error when parsing line"
-        . part
+define | get-lexer parser
+  . parser
 
-  define | wrong? x
-    eqv? WRONG x
+define | parse parser
+  let || lexer | get-lexer parser
+    define | true-procedure-body
+      let || part | parse-or-allow parse-line EOF
+        if | wrong? part
+          parser-error parser "error when parsing line"
+          . part
 
-  define | eat-token tkn
-    var eaten | read-token
-      unless | eqv? tkn eaten
-        parser-error "ecepting" tkn "but" eaten "encountered"
+    define | wrong? x
+      eqv? WRONG x
 
-  define | eaten-token? tkn
-    var eaten | read-token
-      if | eqv? tkn eaten
-        . #t
-        begin
-          unread-token eaten
-          . #f
+    define | eat-token tkn
+      let || eaten | read-token lexer
+        unless | eqv? tkn eaten
+          parser-error parser "excepting" tkn "but" eaten "encountered"
 
-  define | eat-and-return food return
-    eat-token food
-    . return
-    
-  define | kleene-star proc
-    var q | make-q
-      loop read-them
-        var tmp | proc
-          unless | wrong? tmp
-            enq! q tmp
-            read-them
-      q->list q
+    define | eaten-token? tkn
+      let || eaten | read-token lexer
+        if | eqv? tkn eaten
+          . #t
+          begin
+            unread-token lexer eaten
+            . #f
 
-  define | kleene-plus proc
-    var lst | kleene-star proc
-      if [ null? lst ] WRONG lst
+    define | eat-and-return food return
+      eat-token food
+      . return
+      
+    define | kleene-star proc
+      let || q | make-q
+        let read-them ()
+          let || tmp | proc
+            unless | wrong? tmp
+              enq! q tmp
+              read-them
+        q->list q
 
-  define | parse-or-allow parser . allowed
-    var tmp | read-token
-      if | member tmp allowed
+    define | kleene-plus proc
+      let || lst | kleene-star proc
+        if [ null? lst ] WRONG lst
+
+    define | parse-or-allow parser . allowed
+      let || tmp | read-token lexer
+        if | member tmp allowed
+          . tmp
+          begin
+            unread-token lexer tmp
+            parser
+
+    define | force-parsing proc
+      let || tmp | proc
+        when | wrong? tmp
+          parser-error parser [procedure-name proc] "failed"
         . tmp
-        begin
-          unread-token tmp
-          parser
+      
+    define | parse-line
+      let || tkn | read-token lexer
+        cond
+          [ eqv? DOT tkn ]
+            eat-and-return ENDLINE | parse-element
+          [ eqv? ENDLINE tkn ]
+            eat-token INDENT
+            eat-and-return DEDENT | parse-list-of-lines
+          else
+            unread-token lexer tkn
+            let || flat | parse-list-inside
+              if | wrong? flat
+                . WRONG
+                begin
+                  eat-token ENDLINE
+                  if | eaten-token? INDENT
+                    eat-and-return DEDENT | append flat [parse-list-of-lines]
+                    . flat
 
-  define | force-parsing parser
-    var tmp | parser
-      when | wrong? tmp
-        parser-error [procedure-name parser] "failed"
-      . tmp
-    
-  define | parse-line
-    var tkn | read-token
-      cond
-        [ eqv? DOT tkn ]
-          eat-and-return ENDLINE | parse-element
-        [ eqv? ENDLINE tkn ]
-          eat-token INDENT
-          eat-and-return DEDENT | parse-list-of-lines
-        else
-          unread-token tkn
-          var flat | parse-list-inside
-            if | wrong? flat
-              . WRONG
-              begin
-                eat-token ENDLINE
-                if | eaten-token? INDENT
-                  eat-and-return DEDENT | append flat [parse-list-of-lines]
-                  . flat
-
-  define | parse-element
-    var tkn | read-token
-      cond
-        [ eqv? OPEN_PAREN tkn ]
-          var inside | parse-list-inside
-            eat-token CLOSE_PAREN
-            if | wrong? inside
-              . '()
-              . inside
-        [ eqv? OPEN_BRACKET tkn ]
-          var inside | parse-list-inside
-            eat-token CLOSE_BRACKET
-            if | wrong? inside
-              . '()
-              . inside
-        [ datum? tkn ] tkn
-        [ assoc tkn *quotation-tokens* ] =>
-          lambda | info
-            list
-              second info
+    define | parse-element
+      let || tkn | read-token lexer
+        cond
+          [ eqv? OPEN_PAREN tkn ]
+            let || inside | parse-list-inside
+              eat-token CLOSE_PAREN
+              if | wrong? inside
+                . '()
+                . inside
+          [ eqv? OPEN_BRACKET tkn ]
+            let || inside | parse-list-inside
+              eat-token CLOSE_BRACKET
+              if | wrong? inside
+                . '()
+                . inside
+          [ eqv? AMP_DOT tkn ]
+            cons
               force-parsing parse-element
-        else
-          unread-token tkn
+              force-parsing parse-element
+          [ eqv? AMP tkn ]
+            list | force-parsing parse-element
+          [ eqv? AMP_AMP tkn ]
+            list
+              force-parsing parse-element
+              force-parsing parse-element
+          [ eqv? AMP_AMP_AMP tkn ]
+            list
+              force-parsing parse-element
+              force-parsing parse-element
+              force-parsing parse-element
+          [ datum? tkn ] tkn
+          [ assoc tkn *quotation-tokens* ] =>
+            lambda | info
+              list
+                second info
+                force-parsing parse-element
+          else
+            unread-token lexer tkn
+            . WRONG
+
+    define | parse-flat-el
+      parse-or-allow parse-element BAR BAR_BAR BAR_BAR_BAR
+
+    define | parse-list-inside
+      let || flat-el+ | kleene-plus parse-flat-el
+        if | wrong? flat-el+
           . WRONG
+          begin
+            when | eaten-token? DOT
+              set! flat-el+ | append flat-el+ | force-parsing parse-element
+            repair-flat flat-el+
 
-  define | parse-flat-el
-    parse-or-allow parse-element BAR BAR_BAR BAR_BAR_BAR
+    define | repair-flat lst
+      let || lst | cons 'sentinel lst
+        let repair || elem lst
+          if | not | pair? | cl-cdr elem
+            cdr lst
+            let || tmp | second elem
+              cond
+                \ eqv? BAR tmp
+                  set-cdr! elem | list | cddr elem
+                  repair | cadr elem
+                \ eqv? BAR_BAR tmp
+                  set-cdr! elem | list | list | cddr elem
+                  repair | caadr elem
+                \ eqv? BAR_BAR_BAR tmp
+                  set-cdr! elem | list | list | list | cddr elem
+                  repair | caaadr elem
+                else
+                  repair | cdr elem
 
-  define | parse-list-inside
-    var flat-el+ | kleene-plus parse-flat-el
-      if | wrong? flat-el+
-        . WRONG
-        begin
-          when | eaten-token? DOT
-            set! flat-el+ | append flat-el+ | force-parsing parse-element
+    define | parse-flat
+      let || flat-el+ | kleene-plus parse-flat-el
+        if | wrong? flat-el+
+          . WRONG
           repair-flat flat-el+
 
-  define | repair-flat lst
-    var lst | cons 'sentinel lst
-      let repair || elem lst
-        if | not | pair? | cl-cdr elem
-          cdr lst
-          var tmp | second elem
-            cond
-              \ eqv? BAR tmp
-                set-cdr! elem | list | cddr elem
-                repair | cadr elem
-              \ eqv? BAR_BAR tmp
-                set-cdr! elem | list | list | cddr elem
-                repair | caadr elem
-              \ eqv? BAR_BAR_BAR tmp
-                set-cdr! elem | list | list | list | cddr elem
-                repair | caaadr elem
-              else
-                repair | cdr elem
+    define | parse-list-of-lines
+      kleene-plus parse-line
 
-  define | parse-flat
-    var flat-el+ 
-      kleene-plus parse-flat-el
-      if | wrong? flat-el+
-        . WRONG
-        repair-flat flat-el+
+    true-procedure-body
 
-  define | parse-list-of-lines
-    kleene-plus parse-line
-
-  true-procedure-body
+define setup-parser setup-lexer

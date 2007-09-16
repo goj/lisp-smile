@@ -1,0 +1,165 @@
+define | -- x
+  - x
+define ^ expt
+define | != . args
+  not | apply = args
+define | <=> . args
+  cond
+    [ apply < args ] -1
+    [ apply = args ]  0
+    else              1
+
+define *smile-dollar-functions* | quote | sin cos tan exp fact sqrt -- truncate
+define *smile-dollar-operator-precedence*
+  quote
+    \ %function-application
+      ^
+      * /
+      + -
+      = < > <= >= != <=>
+      %negation
+      or and
+
+define | infix->prefix lst
+
+  define | left-associative? operator
+    not | member operator '(^ %function-application)
+
+  define | operator-priority operator
+    let loop
+      \ answer 1
+        part *smile-dollar-operator-precedence*
+      cond
+        [ null? part ] #f
+        [ member operator | car part ] answer
+        else
+          loop [1+ answer] [cdr part]
+
+  define | operator? x
+    operator-priority x
+
+  define | function? x
+    member x *smile-dollar-functions*
+
+  define | negation? x
+    eqv? x 'not
+
+  define | operator-first? s c
+    let \\ ops | operator-priority s
+           opc | operator-priority c
+         or
+          < ops opc
+          and
+            = ops opc
+            left-associative? s
+
+  let
+    \ operators | make-q
+      stack     | make-q
+    define | step
+      let
+        \ b | q-pop! stack
+          a | q-pop! stack
+          o | q-pop! operators
+        cond
+          \ eqv? o '%function-application
+            q-push! stack | list a b
+          \ eqv? o '%negation
+            q-push! stack | list a b
+          else
+            q-push! stack | list o a b
+    do
+      \ args lst | cdr args
+      \ null? args
+        let reduce |
+          if | q-empty? operators
+            q-top stack
+            begin
+              step
+              reduce
+      let || current | car args
+        ;print [q->list stack] [q->list operators]
+        cond
+          \ pair? current
+            if | eqv? 'quote | car current
+              q-push! stack | cadr current
+              q-push! stack | infix->prefix current
+          \ operator? current
+            while
+              and
+                not | q-empty? operators
+                <= 2 | q-length stack
+                operator-first? [q-top operators] current
+              step
+            q-push! operators current
+          \ function? current
+            q-push! stack current
+            q-push! operators '%function-application
+          \ negation? current
+            q-push! stack current
+            q-push! operators '%negation
+          else
+            q-push! stack current
+                
+define | repair-unary-minus arg
+  define oper-fun
+    append
+      apply append | cdr *smile-dollar-operator-precedence*
+      . *smile-dollar-functions*
+
+  let || q | make-q
+    let loop
+      \ start #t
+        lst arg
+      if | null? lst
+          q->list q
+          let || x | car lst
+            cond
+              \ and [ pair? x ] [ not | eqv? 'quote | car x ]
+                enq! q | repair-unary-minus x
+              \ and start | eqv? '- | car lst
+                enq! q '--
+              else
+                enq! q | car lst
+            loop
+              member x oper-fun
+              cdr lst
+
+define | math->prefix args
+  infix->prefix | repair-unary-minus args
+
+define-macro | $ . args
+  math->prefix args
+
+#|
+define examples-infix->prefix
+  quote
+    \ 1 + 2 * 3 + 4
+      3 - 2 - 1
+      1 ^ 2 ^ 3
+      a * x ^ 2 + b * x + c
+      a + b * c ^ d
+      a ^ b * c + d
+      sin x
+      sin x / cos x
+      2 * ( 3 + 4) ^ 5
+      4 * '(car x)
+      sqrt exp x
+      not (sin x = 1) or x = 0
+
+for example in examples-infix->prefix
+  print example "-->" | infix->prefix example
+
+define examples-repair-unary-minus
+  quote
+    \ 1 - - 2
+      - 3 * 4
+      sin(- x)
+      sin - y
+      x - y
+      1 - 2 - 3 - 4
+
+for example in examples-repair-unary-minus
+  print example "-->" | repair-unary-minus example
+
+|#

@@ -8,5 +8,7 @@ use-modules
   ice-9 buffered-input
   ice-9 streams
   ice-9 q
+  ice-9 receive
+  ice-9 optargs
   ice-9 format
   ice-9 syncase

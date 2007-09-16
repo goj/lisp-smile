@@ -1,38 +1,52 @@
-define | lexer-error . args
+define | lexer-error lexer . args
   define | str arg
     format #f "~a" arg
   raise
     list 'lexer-error
       string-join [map str args] " "
       cons
-        port-line   *port*
-        port-column *port*
+        port-line   | lexer-port lexer
+        port-column | lexer-port lexer
 
 ; lexer setup:
 
-define *port*         *unspecified*
-define *indentation*  *unspecified*
-define *empty-line*   *unspecified*
-define *interactive*  *unspecified*
-define *braces*       *unspecified*
-define *token-buffer* *unspecified*
+define-class <lexer> |
+  port         #:accessor lexer-port         #:init-keyword #:port
+  interactive? #:accessor lexer-interactive? #:init-keyword #:interactive?
+  indentation  #:accessor lexer-indentation  #:init-value '(0)
+  empty-line?  #:accessor lexer-empty-line?  #:init-value #t
+  braces       #:accessor lexer-braces       #:init-value '()
+  token-buffer #:accessor lexer-token-buffer #:init-thunk make-q
+
+define | copy-lexer parser
+  let \\ port        | lexer-port parser
+         interactive | lexer-interactive? parser
+       make <lexer> #:port port #:interactive? interactive
+       
+define-macro | reset-lexer lexer
+  quasiquote
+    set! ,lexer | copy-lexer ,lexer
 
 define | setup-lexer port interactive
-  set! *port*         port
-  set! *interactive*  interactive
-  reset-lexer
+  make <lexer> #:port port #:interactive? interactive
 
-define | reset-lexer
-  set! *indentation*  '(0)
-  set! *empty-line*    #t
-  set! *braces*       '()
-  set! *token-buffer* | make-q
+define | read-token lexer
+  let || port | lexer-port lexer
+    define | on-empty-line?
+      lexer-empty-line? lexer
+    define | set-on-empty-line! x
+      set! [lexer-empty-line? lexer] x
 
-define | make-char-set-predicate char-set
-  lambda | chr
-    char-set-contains? char-set chr
+    define | indentation
+      lexer-indentation lexer
+    define | set-indentation! new-one
+      set! [lexer-indentation lexer] new-one
+    define | add-to-indentation x
+      set! [lexer-indentation lexer] | cons x | lexer-indentation lexer
 
-define | read-token
+    define | token-buffer
+      lexer-token-buffer lexer
+
     define ignored
         char-set #\space #\tab
 
@@ -45,10 +59,10 @@ define | read-token
       char-set-contains? separators chr
 
     define | read-until-predicate pred result
-      var chr | read-char *port*
+      let || chr | read-char port
         if | pred chr
           begin
-            unread-char chr *port*
+            unread-char chr port
             reverse-list->string result
           read-until-predicate pred | cons chr result
 
@@ -59,43 +73,43 @@ define | read-token
             read | open-input-string str
 
     define | open-parenthesis type
-      set! *braces* | cons type *braces*
+      set! [lexer-braces lexer] | cons type [lexer-braces lexer]
       
     define | close-parenthesis type
       cond
-        \ null? *braces*
-          lexer-error "unexcepted closing brace"
-        \ eq? type | car *braces*
-          set! *braces* | cdr *braces*
+        \ null? | lexer-braces lexer
+          lexer-error lexer "unexcepted closing brace"
+        \ eq? type | car | lexer-braces lexer
+          set! [lexer-braces lexer] | cdr | lexer-braces lexer
         else
-           lexer-error "incompatible braces"
+           lexer-error lexer "incompatible braces"
 
     define | on-flat?
       or
-        not *empty-line*
-        null? *braces*
+        not | on-empty-line?
+        null? | lexer-braces lexer
 
     define | read-slash
-      var chr | read-char *port*
+      let || chr | read-char port
         cond
           \ char=? chr #\newline
             eat-whitespace
           \ char-set-contains? ignored chr
             read-slash
           else
-             unread-char chr *port*
+             unread-char chr port
              start-new-line
     
     define | read-string
-      unread-char #\" *port*
-      read *port*
+      unread-char #\" port
+      read port
 
     define | read-real-token chr
-      set! *empty-line* #f
+      set-on-empty-line! #f
       cond
         \ char=? chr #\#
-          unread-char #\# *port*
-          read *port*
+          unread-char #\# port
+          read port
         \ char=? chr #\"
           read-string
         \ char=? chr #\\
@@ -103,11 +117,11 @@ define | read-token
         \ char=? chr #\'
           . SINGLE_QUOTE
         \ char=? chr #\,
-          var tmp | read-char *port*
+          let || tmp | read-char port
             if | char=? tmp #\@
              . COMMA_AT
              begin
-               unread-char tmp *port*
+               unread-char tmp port
                . COMMA
         [ assoc chr *brace-tokens* ] =>
           lambda | spec
@@ -121,73 +135,72 @@ define | read-token
             read-until-predicate separator? | list chr
 
     define | do-at-eof
-      unless *empty-line*
-        enq! *token-buffer* ENDLINE
-      repeat [1- | length *indentation*] times
-        enq! *token-buffer* DEDENT
-      enq! *token-buffer* EOF
-      set! *indentation* '(1)
-      deq! *token-buffer*
+      unless | on-empty-line?
+        enq! [token-buffer] ENDLINE
+      do-times [1- | length | indentation]
+        enq! [token-buffer] DEDENT
+      enq! [token-buffer] EOF
+      set-indentation! '(1)
+      deq! [token-buffer]
 
     define | start-new-line
-      if *empty-line*
+      if | on-empty-line?
         eat-whitespace
         begin
-          loop position
-            var chr | read-char *port*
+          let position |
+            let || chr | read-char port
               cond
                 \ eof-object? chr
                   do-at-eof
                 \ and
                     char=? chr #\newline
-                    = 0 | port-column *port*
-                    . *interactive*
+                    = 0 | port-column port
+                    lexer-interactive? lexer
                   do-at-eof
                 \ char-whitespace? chr
                   position
                 else
-                  set! *empty-line* #t
-                  unread-char chr *port*
-                  var col | port-column *port*
+                  set-on-empty-line! #t
+                  unread-char chr port
+                  let || col | port-column port
                     cond
-                      [ > col | first *indentation* ]
-                        set! *indentation* | cons col *indentation*
-                        enq! *token-buffer* INDENT
-                      [ member col *indentation* ] =>
+                      [ > col | first | indentation ]
+                        add-to-indentation col
+                        enq! [token-buffer] INDENT
+                      [ member col | indentation ] =>
                         lambda | whats-left
-                          let \\ prev-len | length *indentation*
+                          let \\ prev-len | length | indentation
                                  curr-len | length whats-left
-                               set! *indentation* whats-left
+                               set-indentation! whats-left
                                do \\ countdown
                                       - prev-len curr-len
                                       1- countdown
                                    | = countdown 0
-                                   enq! *token-buffer* DEDENT
+                                   enq! [token-buffer] DEDENT
                       else
-                        lexer-error "bad indentation" col *indentation*
+                        lexer-error lexer "bad indentation" col [indentation]
                   . ENDLINE
 
     define | read-part
-      var chr '_
-        loop pre-loop
-          set! chr | read-char *port*
+      let || chr '_
+        let pre-loop |
+          set! chr | read-char port
           when | char-whitespace? chr
             pre-loop
-        let loop
-          | result | list chr
-          set! chr | read-char *port*
+        let loop || result | list chr
+          set! chr | read-char port
           if | char-whitespace? chr
             reverse-list->string result
             loop | cons chr result
 
     define | eat-whitespace
       define | ignore-comment
-        do || tmp #\_ | read-char *port*
+        do || tmp #\_ | read-char port
            \ char=? tmp #\newline
-             unread-char tmp *port*
+             unread-char tmp port
              eat-whitespace
            . 'do-nothing
-      var chr | read-char *port*
+      let || chr | read-char port
         if | eof-object? chr
           do-at-eof
           case chr
@@ -200,13 +213,13 @@ define | read-token
             [ #\; ]
               ignore-comment
             [ #\# ]
-              var chr2 | read-char *port*
+              let || chr2 | read-char port
                 case chr2
                   [ #\! ]
                     ignore-comment
                   [ #\| ]
                     let read-comment || depth 1
-                      var current | read-part
+                      let || current | read-part
                         cond
                           \ string=? current "#|"
                             read-comment | 1+ depth
@@ -217,17 +230,17 @@ define | read-token
                           else
                              read-comment depth
                   else
-                    unread-char chr2 *port*
+                    unread-char chr2 port
                     read-real-token chr
             else
               read-real-token chr
 
     ; procedure body
-    if | q-empty? *token-buffer*
+    if | q-empty? [token-buffer]
       eat-whitespace
-      deq! *token-buffer*
+      deq! [token-buffer]
 
-define | unread-token tkn
-  q-push! *token-buffer* tkn
+define | unread-token lexer tkn
+  q-push! [lexer-token-buffer lexer] tkn
 
 

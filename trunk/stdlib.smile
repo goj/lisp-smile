@@ -1,113 +1,75 @@
-define-syntax var
-  lambda | x
-    syntax-case x |
-      \ _ name binding a b ...
-        syntax
-          let ((name binding)) a b ...
-
 define-syntax loop
   lambda | x
+    syntax-case x | in
+      \ _ function i in lst c1 c2 ...
+        syntax
+          function
+            lambda [i] c1 c2 ...
+            . lst
+      \ _ function i j in lst1 lst2 c1 c2 ...
+        syntax
+          function
+            lambda [i j] c1 c2 ...
+            . lst1
+            . lst2
+      \ _ function i j k in lst1 lst2 lst3 c1 c2 ...
+        syntax
+          function
+            lambda [i j k] c1 c2 ...
+            . lst1
+            . lst2
+            . lst3
+
+define-macro | gensyms a . rest
+  quasiquote
+    let*
+      unquote
+        calc-for i in a
+          list i '(gensym)
+      unquote-splicing rest
+
+define-macro | for . x
+  append '(loop for-each) x
+
+define-method | for-each fn [s1 <promise>]
+  stream-for-each fn s1
+
+define-method | for-each fn [s1 <promise>] [s2 <promise>]
+  stream-for-each fn s1 s2
+
+define-method | for-each fn [s1 <promise>] [s2 <promise>] [s3 <promise>]
+  stream-for-each fn s1 s2 s3
+
+define-method | for-each fn [s1 <hashtable>]
+  hash-for-each [lambda [x y] | fn [cons x y]] s1
+
+define-macro | calc-for . x
+  append '(loop map) x
+
+define-syntax do-times
+  lambda | x
     syntax-case x |
-      \ _ name a b ...
-        syntax
-          let name () a b ...
-
-define-syntax for
-  lambda | x
-    syntax-case x | in from to
-      \ _ i from a to b c1 c2 ...
-        syntax
-          let req || i a
-            if | <= i b
-               begin c1 c2 ...
-                     req | 1+ i
-      \ _ i in lst c1 c2 ...
-        syntax
-          for-each
-            lambda [i] c1 c2 ...
-            . lst
-      \ _ i j in lst1 lst2 c1 c2 ...
-        syntax
-          for-each
-            lambda [i j] c1 c2 ...
-            . lst1
-            . lst2
-      \ _ i j k in lst1 lst2 lst3 c1 c2 ...
-        syntax
-          for-each
-            lambda [i j k] c1 c2 ...
-            . lst1
-            . lst2
-            . lst3
-
-
-define-syntax calc-for
-  lambda | x
-    syntax-case x | in from to
-      \ _ i from a to b c1 c2 ...
-        syntax
-          calc-for i in [list-range a b] c1 c2 ...
-      \ _ i in lst c1 c2 ...
-        syntax
-          map
-            lambda [i] c1 c2 ...
-            . lst
-      \ _ i j in lst1 lst2 c1 c2 ...
-        syntax
-          map
-            lambda [i j] c1 c2 ...
-            . lst1
-            . lst2
-      \ _ i j k in lst1 lst2 lst3 c1 c2 ...
-        syntax
-          map
-            lambda [i j k] c1 c2 ...
-            . lst1
-            . lst2
-            . lst3
-
-define-syntax repeat
-  lambda | x
-    syntax-case x | times
-      \ _ count times c1 c2 ...
+      \ _ count c1 c2 ...
         syntax
           let req || n count
-            unless | zero? n
+            when | > n 0
               begin c1 c2 ...
               req | 1- n
 
-define | all-fn? pred lst
+define | all? pred lst
   cond
     [ null? lst ] #t
     [ pred | first lst ]
-      all-fn? pred | rest lst
+      all? pred | rest lst
     else #f
 
-define | any-fn? pred lst
+define | any? pred lst
   cond
     [ null? lst ] #f
     [ pred | first lst ]
       #t
     else
-      any-fn? pred | rest lst
-
-define-syntax all?
-  lambda | x
-    syntax-case x | in
-      \ _ i in lst c1 c2 ...
-        syntax
-          all-fn?
-            lambda [i] c1 c2 ...
-            . lst
-
-define-syntax any?
-  lambda | x
-    syntax-case x | in
-      \ _ i in lst c1 c2 ...
-        syntax
-          all-fn?
-            lambda [i] c1 c2 ...
-            . lst
+      any? pred | rest lst
 
 define-syntax when
   lambda | x
@@ -130,7 +92,7 @@ define-syntax bind
     syntax-case x |
       \ _ name (a) b c ...
         syntax
-          var a | car name
+          let || a | car name
             begin b c ...
       \ _ name (a b c ...) d e ...
         syntax
@@ -138,23 +100,47 @@ define-syntax bind
                  tmp | cdr name
                bind tmp (b c ...) d e ...
 
+define-syntax lambda-bind
+  lambda | x
+    syntax-case x |
+      \ _ (a b ...) c d ...
+        syntax
+          lambda | tmp
+            bind tmp (a b ...) c d ...
+
 define | output-delimited func delim args
   unless | null? args
     let req || args args
       func | car args
-      var tail | cdr args
+      let || tail | cdr args
         unless | null? tail
           display delim
           req tail
   
-define | print* . args
-  output-delimited display " " args
+define* | print #:key [before ""] [delim " "] [after "\n"] #:rest args
+  display before
+  let || tmp | make-q
+    let req || args args
+      cond
+        \ null? args
+          output-delimited display delim
+            q->list tmp
+        \ member [car args] '[ #:before #:delim #:after ] eq?
+          req | cl-c___r dd args
+        else
+          enq! tmp | car args
+          req | cdr args
+  display after
 
-define | print . args
-  apply print* args
-  newline
 
 define rest cdr
+
+define q->list car
+define q-top q-front
+define | list->q lst
+  let || q | cons lst #f
+    sync-q! q
+    . q
 
 define | cl-car x
   if | null? x
@@ -166,6 +152,37 @@ define | cl-cdr x
     . '()
     cdr x
 
+define | symbol-append . lst
+  string->symbol | apply string-append | map symbol->string lst
+
+define-macro | cl-c___r ___ x
+  let* || lst | map string->symbol | map string | string->list | symbol->string ___
+    let calc || lst lst
+      if | null? lst
+        . x
+        let || fun | symbol-append 'cl-c [car lst] 'r
+          list fun | calc | cdr lst
+
+define-macro | define-cl-c___rs a b
+  let || result | make-q
+    enq! result 'begin
+    let req
+      \ level 0
+        str   ""
+      if | >= level a
+        let*
+          \ symbol    | string->symbol str
+            full-name | symbol-append 'cl-c symbol 'r
+          enq! result
+            quasiquote
+              define-macro | ,full-name __x__
+                cl-c___r ,symbol __x__
+      when | < level b
+        req [1+ level] [string-append str "a"]
+        req [1+ level] [string-append str "d"]
+    q->list result
+define-cl-c___rs 2 5
+
 define | range a b
   make-stream
     lambda | state
@@ -175,10 +192,4 @@ define | range a b
     . a
 
 define | list-range a b
-  var q | make-q
-    let loop || state a
-      if | <= state b
-        enq! state
-        q->list q
-
-define q->list car
+  stream->list | range a b

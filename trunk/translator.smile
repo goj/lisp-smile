@@ -1,10 +1,9 @@
-#!/usr/bin/env smile
 load "smile.scm"
 
 define | translate
-  setup-lexer [current-input-port] #f
-  loop grande-lupe
-    var parsed | parse
+  define *parser* | setup-parser [current-input-port] #f
+  let grande-lupe ()
+    let || parsed | parse *parser*
       unless | eqv? parsed EOF
         pretty-print parsed
         grande-lupe

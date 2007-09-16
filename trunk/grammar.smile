@@ -32,14 +32,14 @@ define *grammar*
 define-macro | make-makers name . lst ; tmp
   cons 'begin
     calc-for i in lst
-      var proc-name | string->symbol | string-append name | symbol->string i
+      let || proc-name | string->symbol | string-append name | symbol->string i
         quasiquote
           define | ,proc-name . args
             print "called" [quote ,proc-name] args
             quote ,proc-name
 
 define-macro | make-all-makers
-  var names | map first *grammar*
+  let || names | map first *grammar*
     cons 'begin
       list
         cons 'make-makers | cons "make-" names

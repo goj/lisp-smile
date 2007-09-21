@@ -36,7 +36,6 @@ define | read-token lexer
       lexer-empty-line? lexer
     define | set-on-empty-line! x
       set! [lexer-empty-line? lexer] x
-
     define | indentation
       lexer-indentation lexer
     define | set-indentation! new-one
@@ -53,7 +52,7 @@ define | read-token lexer
     define separators
       char-set-union
         apply char-set | map first *brace-tokens*
-        char-set #\space #\newline #\tab #\"
+        char-set #\space #\newline #\tab #\" #\;
 
     define | separator? chr
       char-set-contains? separators chr
@@ -85,7 +84,7 @@ define | read-token lexer
            lexer-error lexer "incompatible braces"
 
     define | on-flat?
-      or
+      and
         not | on-empty-line?
         null? | lexer-braces lexer
 
@@ -116,6 +115,8 @@ define | read-token lexer
           read-slash
         \ char=? chr #\'
           . SINGLE_QUOTE
+        \ char=? chr #\`
+          . QUASI_QUOTE
         \ char=? chr #\,
           let || tmp | read-char port
             if | char=? tmp #\@
@@ -145,40 +146,38 @@ define | read-token lexer
     define | start-new-line
       if | on-empty-line?
         eat-whitespace
-        begin
-          let position |
-            let || chr | read-char port
-              cond
-                \ eof-object? chr
-                  do-at-eof
-                \ and
-                    char=? chr #\newline
-                    = 0 | port-column port
-                    lexer-interactive? lexer
-                  do-at-eof
-                \ char-whitespace? chr
-                  position
-                else
-                  set-on-empty-line! #t
-                  unread-char chr port
-                  let || col | port-column port
-                    cond
-                      [ > col | first | indentation ]
-                        add-to-indentation col
-                        enq! [token-buffer] INDENT
-                      [ member col | indentation ] =>
-                        lambda | whats-left
-                          let \\ prev-len | length | indentation
-                                 curr-len | length whats-left
-                               set-indentation! whats-left
-                               do \\ countdown
-                                      - prev-len curr-len
-                                      1- countdown
-                                   | = countdown 0
-                                   enq! [token-buffer] DEDENT
-                      else
-                        lexer-error lexer "bad indentation" col [indentation]
-                  . ENDLINE
+        let position |
+          let || chr | read-char port
+            cond
+              \ eof-object? chr
+                do-at-eof
+              \ and
+                  char=? chr #\newline
+                  = 0 | port-column port
+                  lexer-interactive? lexer
+                do-at-eof
+              \ char-whitespace? chr
+                position
+              else
+                set-on-empty-line! #t
+                unread-char chr port
+                let || col | port-column port
+                  cond
+                    [ > col | first | indentation ]
+                      add-to-indentation col
+                      enq! [token-buffer] INDENT
+                    [ member col | indentation ] =>
+                      lambda | whats-left
+                        let \\ prev-len | length | indentation
+                               curr-len | length whats-left
+                             set-indentation! whats-left
+                             do \\ countdown | - prev-len curr-len
+                                    1- countdown
+                                 | = countdown 0
+                                 enq! [token-buffer] DEDENT
+                    else
+                      lexer-error lexer "bad indentation" col [indentation]
+                . ENDLINE
 
     define | read-part
       let || chr '_

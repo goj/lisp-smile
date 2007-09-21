@@ -4,25 +4,26 @@ define *parser* | setup-parser [readline-port] #t
 set-readline-prompt! ">>> " "... "
 define r5rs | interaction-environment
 define *verbose* #f
+readline-enable 'history-file
 
-let grande-lupe ()
-  unless
-    eqv? EOF
-      catch #t
-        lambda |
-          reset-lexer *parser*
-          set-buffered-input-continuation?! [readline-port] #f
-          let || parsed | parse *parser*
-            if | eqv? EOF parsed
-              . EOF
-              let || result | eval parsed r5rs
-                unless | eq? *unspecified* result
-                  pretty-print result
-                . result
-        lambda | key . args
-          print "ERROR:" key args
+
+with-cc break
+  let grande-lupe |
+    catch #t
+      lambda |
+        reset-lexer *parser*
+        set-buffered-input-continuation?! [readline-port] #f
+        let || parsed | parse *parser*
+          ;pretty-print parsed #:per-line-prefix "::: "
+          if | eqv? EOF parsed
+            break #f
+            let || result | eval parsed r5rs
+              unless | eq? *unspecified* result
+                pretty-print result
+      lambda | key . args
+        print "ERROR: " key args
+        backtrace
     grande-lupe
-      
 print "bye!"
 
 #|

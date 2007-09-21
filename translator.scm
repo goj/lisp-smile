@@ -14,31 +14,48 @@
   (ice-9 optargs)
   (ice-9 format)
   (ice-9 syncase))
-(define-syntax
-  loop
-  (lambda (x)
-    (syntax-case
-      x
-      (in)
-      ((_ function i in lst c1 c2 ...)
-       (syntax (function (lambda (i) c1 c2 ...) lst)))
-      ((_ function i j in lst1 lst2 c1 c2 ...)
-       (syntax
-         (function (lambda (i j) c1 c2 ...) lst1 lst2)))
-      ((_ function i j k in lst1 lst2 lst3 c1 c2 ...)
-       (syntax
-         (function
-           (lambda (i j k) c1 c2 ...)
-           lst1
-           lst2
-           lst3))))))
+(define-macro
+  (simple-syntax header . body)
+  (let ((name (car header))
+        (bindings (cdr header))
+        (x (gensym)))
+    `(define-syntax
+       ,name
+       (lambda ((unquote x))
+         (syntax-case
+           ,x
+           ()
+           ((_ (unquote-splicing bindings))
+            (syntax (unquote-splicing body))))))))
 (define-macro
   (gensyms a . rest)
-  `(let* ,(calc-for i in a (list i (quote (gensym))))
+  `(let ,(calc-for i in a (list i (quote (gensym))))
      ,@rest))
+(simple-syntax
+  (%% fn (x y ...) (a b ...) c1 c2 ...)
+  (fn (lambda (x y ...) c1 c2 ...) a b ...))
+(define-macro
+  (% fn bindings . rest)
+  (receive
+    (collections body)
+    (split-at rest (length bindings))
+    `(%% ,fn
+         ,bindings
+         ,collections
+         ,@body)))
+(define (make-eqv y) (lambda (x) (eqv? x y)))
+(define-macro
+  (%~ fn . args)
+  (receive
+    (bindings rest)
+    (break! (make-eqv (quote in)) args)
+    `(% ,fn
+        ,bindings
+        ,@(cdr rest))))
+(define loop %~)
 (define-macro
   (for . x)
-  (append (quote (loop for-each)) x))
+  (append (quote (%~ for-each)) x))
 (define-method
   (for-each fn (s1 <promise>))
   (stream-for-each fn s1))
@@ -57,62 +74,28 @@
   (hash-for-each (lambda (x y) (fn (cons x y))) s1))
 (define-macro
   (calc-for . x)
-  (append (quote (loop map)) x))
-(define-syntax
-  do-times
-  (lambda (x)
-    (syntax-case
-      x
-      ()
-      ((_ count c1 c2 ...)
-       (syntax
-         (let req ((n count))
-           (when (> n 0) (begin c1 c2 ...) (req (1- n)))))))))
-(define (all? pred lst)
-  (cond ((null? lst) #t)
-        ((pred (first lst)) (all? pred (rest lst)))
-        (else #f)))
-(define (any? pred lst)
-  (cond ((null? lst) #f)
-        ((pred (first lst)) (#t))
-        (else (any? pred (rest lst)))))
-(define-syntax
-  when
-  (lambda (x)
-    (syntax-case
-      x
-      ()
-      ((_ cnd c1 c2 ...)
-       (syntax (if cnd (begin c1 c2 ...)))))))
-(define-syntax
-  unless
-  (lambda (x)
-    (syntax-case
-      x
-      ()
-      ((_ cnd c1 c2 ...)
-       (syntax (if (not cnd) (begin c1 c2 ...)))))))
-(define-syntax
-  bind
-  (lambda (x)
-    (syntax-case
-      x
-      ()
-      ((_ name (a) b c ...)
-       (syntax (let ((a (car name))) (begin b c ...))))
-      ((_ name (a b c ...) d e ...)
-       (syntax
-         (let ((a (car name)) (tmp (cdr name)))
-           (bind tmp (b c ...) d e ...)))))))
-(define-syntax
-  lambda-bind
-  (lambda (x)
-    (syntax-case
-      x
-      ()
-      ((_ (a b ...) c d ...)
-       (syntax
-         (lambda (tmp) (bind tmp (a b ...) c d ...)))))))
+  (append (quote (%~ map)) x))
+(simple-syntax
+  (do-times count c1 c2 ...)
+  (let req ((n count))
+    (when (> n 0) (begin c1 c2 ...) (req (1- n)))))
+(simple-syntax
+  (when cnd c1 c2 ...)
+  (if cnd (begin c1 c2 ...) *unspecified*))
+(simple-syntax
+  (unless cnd c1 c2 ...)
+  (if cnd *unspecified* (begin c1 c2 ...)))
+(simple-syntax
+  (bind lst (a b ...) c d ...)
+  (receive (a b ...) (apply values lst) c d ...))
+(define-macro
+  (lambda-bind vars . body)
+  (gensyms
+    (tmp)
+    `(lambda ((unquote tmp))
+       (bind ,tmp
+             ,vars
+             ,@body))))
 (define (output-delimited func delim args)
   (unless
     (null? args)
@@ -120,6 +103,16 @@
       (func (car args))
       (let ((tail (cdr args)))
         (unless (null? tail) (display delim) (req tail))))))
+(define (positional-only args)
+  (let ((tmp (make-q)))
+    (let req ((args args))
+      (cond ((null? args) (q->list tmp))
+            ((member
+               (car args)
+               '(#:before #:delim #:after)
+               eq?)
+             (req (cl-cddr args)))
+            (else (enq! tmp (car args)) (req (cdr args)))))))
 (define*
   (print #:key
          (before "")
@@ -129,16 +122,10 @@
          #:rest
          args)
   (display before)
-  (let ((tmp (make-q)))
-    (let req ((args args))
-      (cond ((null? args)
-             (output-delimited display delim (q->list tmp)))
-            ((member
-               (car args)
-               '(#:before #:delim #:after)
-               eq?)
-             (req (cl-c___r dd args)))
-            (else (enq! tmp (car args)) (req (cdr args))))))
+  (output-delimited
+    display
+    delim
+    (positional-only args))
   (display after))
 (define rest cdr)
 (define q->list car)
@@ -171,8 +158,7 @@
                (full-name
                  (symbol-append (quote cl-c) symbol (quote r))))
           (enq! result
-                `(define-macro
-                   ((unquote full-name) __x__)
+                `(define ((unquote full-name) __x__)
                    (cl-c___r (unquote symbol) __x__)))))
       (when (< level b)
             (req (1+ level) (string-append str "a"))
@@ -304,6 +290,7 @@
             ((char=? chr #\") (read-string))
             ((char=? chr #\\) (read-slash))
             ((char=? chr #\') SINGLE_QUOTE)
+            ((char=? chr #\`) QUASI_QUOTE)
             ((char=? chr #\,)
              (let ((tmp (read-char port)))
                (if (char=? tmp #\@)
@@ -311,13 +298,14 @@
                  (begin (unread-char tmp port) COMMA))))
             ((assoc chr *brace-tokens*)
              =>
-             (lambda (spec)
-               (bind spec
-                     (chr token type open)
-                     (if open
-                       (open-parenthesis type)
-                       (close-parenthesis type))
-                     token)))
+             (lambda (tmp)
+               (receive
+                 (chr token type open)
+                 (apply values tmp)
+                 (if open
+                   (open-parenthesis type)
+                   (close-parenthesis type))
+                 token)))
             (else
              (string->thing
                (read-until-predicate separator? (list chr))))))
@@ -442,7 +430,11 @@
 (register-token INDENT DEDENT ENDLINE)
 (register-token DOT BAR BAR_BAR BAR_BAR_BAR)
 (register-token AMP_DOT AMP AMP_AMP AMP_AMP_AMP)
-(register-token SINGLE_QUOTE COMMA COMMA_AT)
+(register-token
+  SINGLE_QUOTE
+  COMMA
+  COMMA_AT
+  QUASI_QUOTE)
 (register-token OPEN_PAREN CLOSE_PAREN)
 (register-token OPEN_BRACKET CLOSE_BRACKET)
 (register-token EOF WRONG)
@@ -470,6 +462,7 @@
     ("~EOF~" (unquote EOF))))
 (define *quotation-tokens*
   (list (list SINGLE_QUOTE (quote quote))
+        (list QUASI_QUOTE (quote quasiquote))
         (list COMMA (quote unquote))
         (list COMMA_AT (quote unquote-splicing))))
 (define (get-lexer parser) parser)
@@ -503,17 +496,17 @@
     (define (kleene-star proc)
       (let ((q (make-q)))
         (let read-them ()
-          (let ((tmp (proc)))
-            (unless (wrong? tmp) (enq! q tmp) (read-them))))
+          (let ((tmp_ (proc)))
+            (unless (wrong? tmp_) (enq! q tmp_) (read-them))))
         (q->list q)))
     (define (kleene-plus proc)
       (let ((lst (kleene-star proc)))
         (if (null? lst) WRONG lst)))
-    (define (parse-or-allow parser . allowed)
-      (let ((tmp (read-token lexer)))
-        (if (member tmp allowed)
-          tmp
-          (begin (unread-token lexer tmp) (parser)))))
+    (define (parse-or-allow parser-fn . allowed)
+      (let ((tmp__ (read-token lexer)))
+        (if (member tmp__ allowed)
+          tmp__
+          (begin (unread-token lexer tmp__) (parser-fn)))))
     (define (force-parsing proc)
       (let ((tmp (proc)))
         (when (wrong? tmp)
@@ -677,7 +670,7 @@
              (begin (step) (reduce)))))
       (let ((current (car args)))
         (cond ((pair? current)
-               (if (eqv? (quote quote) (car current))
+               (if (member (car current) (quote (quote unquote)))
                  (q-push! stack (cadr current))
                  (q-push! stack (infix->prefix current))))
               ((operator? current)

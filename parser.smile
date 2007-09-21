@@ -27,7 +27,7 @@ define | datum? x
 register-token INDENT DEDENT ENDLINE
 register-token DOT BAR BAR_BAR BAR_BAR_BAR
 register-token AMP_DOT AMP AMP_AMP AMP_AMP_AMP
-register-token SINGLE_QUOTE COMMA COMMA_AT
+register-token SINGLE_QUOTE COMMA COMMA_AT QUASI_QUOTE
 register-token OPEN_PAREN CLOSE_PAREN
 register-token OPEN_BRACKET CLOSE_BRACKET
 
@@ -69,6 +69,7 @@ define *token-strings*
 define *quotation-tokens*
   list
     list SINGLE_QUOTE 'quote
+    list QUASI_QUOTE  'quasiquote
     list COMMA        'unquote
     list COMMA_AT     'unquote-splicing
 
@@ -106,9 +107,9 @@ define | parse parser
     define | kleene-star proc
       let || q | make-q
         let read-them ()
-          let || tmp | proc
-            unless | wrong? tmp
-              enq! q tmp
+          let || tmp_ | proc
+            unless | wrong? tmp_
+              enq! q tmp_
               read-them
         q->list q
 
@@ -116,13 +117,13 @@ define | parse parser
       let || lst | kleene-star proc
         if [ null? lst ] WRONG lst
 
-    define | parse-or-allow parser . allowed
-      let || tmp | read-token lexer
-        if | member tmp allowed
-          . tmp
+    define | parse-or-allow parser-fn . allowed
+      let || tmp__ | read-token lexer
+        if | member tmp__ allowed
+          . tmp__
           begin
-            unread-token lexer tmp
-            parser
+            unread-token lexer tmp__
+            parser-fn
 
     define | force-parsing proc
       let || tmp | proc

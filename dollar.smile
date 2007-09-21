@@ -81,7 +81,7 @@ define | infix->prefix lst
         ;print [q->list stack] [q->list operators]
         cond
           \ pair? current
-            if | eqv? 'quote | car current
+            if | member [car current] '[quote unquote]
               q-push! stack | cadr current
               q-push! stack | infix->prefix current
           \ operator? current
@@ -142,8 +142,8 @@ define examples-infix->prefix
       a ^ b * c + d
       sin x
       sin x / cos x
-      2 * ( 3 + 4) ^ 5
-      4 * '(car x)
+      2 * (3 + 4) ^ 5
+      4 * ,(car x)
       sqrt exp x
       not (sin x = 1) or x = 0
 

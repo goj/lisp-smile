@@ -2,7 +2,7 @@ define-class <token> |
   type
 
 define-method | initialize [tkn <token>] args
-  bind args | val
+  bind-vars args | val
     slot-set! tkn 'type  val
 
 define-method | write [tkn <token>] [port <port>]
@@ -231,5 +231,7 @@ define | parse parser
       kleene-plus parse-line
 
     true-procedure-body
+export parse
 
 define setup-parser setup-lexer
+export setup-parser

@@ -1,21 +1,29 @@
 load "smile.scm"
+use-modules
+  smile std
+  ice-9 pretty-print
+  ice-9 rdelim
+  ice-9 readline
+  ice-9 buffered-input
 
-define *parser* | setup-parser [readline-port] #t
+define *parser* | [@ [smile internals] setup-parser] [readline-port] #t
 set-readline-prompt! ">>> " "... "
 define r5rs | interaction-environment
-define *verbose* #f
 readline-enable 'history-file
 
+define __copy-lexer__ | @ [smile internals] copy-lexer
+define parse-smile    | @ [smile internals] parse
+define __EOF__        | @@ [smile internals] EOF
 
 with-cc break
   let grande-lupe |
     catch #t
       lambda |
-        reset-lexer *parser*
+        set! *parser* | __copy-lexer__ *parser*
         set-buffered-input-continuation?! [readline-port] #f
-        let || parsed | parse *parser*
+        let || parsed | parse-smile *parser*
           ;pretty-print parsed #:per-line-prefix "::: "
-          if | eqv? EOF parsed
+          if | eqv? __EOF__ parsed
             break #f
             let || result | eval parsed r5rs
               unless | eq? *unspecified* result

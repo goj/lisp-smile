@@ -2,9 +2,10 @@
 TRANSLATOR=guile translator.scm
 all: smile.scm new-translator.scm interpreter.scm shell.scm
 
-smile.scm: smile-use-modules.smile stdlib.smile lexer.smile parser.smile load-smile.smile dollar.smile
+smile.scm: stdlib.smile dollar.smile smile-use-modules.smile lexer.smile parser.smile load-smile.smile
 	rm -f $@
 	for i in $^; do cat $$i  | grep -v '^load' | $(TRANSLATOR) >> $@;  done
+	echo "(set-current-module ( resolve-module '(guile)))"
 
 new-translator.scm: translator.smile smile.scm
 	echo -e '#!/usr/bin/guile -s' > $@
@@ -33,11 +34,12 @@ shell.scm: shell.smile smile.scm
 
 bootstrap: standalone-translator.scm
 	make clean
+	cp translator.scm translator_backup.scm
 	cp $< translator.scm
 	chmod +x translator.scm
 	make all
 
 clean:
-	rm -f smile.scm new-translator.scm interpreter.scm shell.scm
+	rm -f smile.scm new-translator.scm interpreter.scm shell.scm standalone-translator.scm
 
 redo: clean all

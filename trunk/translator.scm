@@ -1,19 +1,13 @@
 #!/usr/bin/guile -s
 !#
+(define-module (smile std))
+(use-syntax (ice-9 syncase))
 (use-modules
   (oop goops)
-  (srfi srfi-1)
-  (srfi srfi-34)
-  (ice-9 pretty-print)
-  (ice-9 rdelim)
-  (ice-9 readline)
-  (ice-9 buffered-input)
-  (ice-9 streams)
-  (ice-9 q)
   (ice-9 receive)
+  (srfi srfi-1)
   (ice-9 optargs)
-  (ice-9 format)
-  (ice-9 syncase))
+  (ice-9 q))
 (define-macro
   (simple-syntax header . body)
   (let ((name (car header))
@@ -27,13 +21,26 @@
            ()
            ((_ (unquote-splicing bindings))
             (syntax (unquote-splicing body))))))))
+(export simple-syntax)
 (define-macro
   (gensyms a . rest)
-  `(let ,(calc-for i in a (list i (quote (gensym))))
+  (unless
+    (list? a)
+    (error "gensyms expects list of symbols as it's first argument"))
+  `(let ,(%~ map i in a (list i (quote (gensym))))
      ,@rest))
+(export gensyms)
+(define-macro
+  (with woot arg . thunk)
+  (let ((with-woot (symbol-append (quote with-) woot)))
+    `(,with-woot
+      arg
+      (lambda () (unquote-splicing thunk)))))
+(export with)
 (simple-syntax
   (%% fn (x y ...) (a b ...) c1 c2 ...)
   (fn (lambda (x y ...) c1 c2 ...) a b ...))
+(export %%)
 (define-macro
   (% fn bindings . rest)
   (receive
@@ -43,7 +50,9 @@
          ,bindings
          ,collections
          ,@body)))
+(export %)
 (define (make-eqv y) (lambda (x) (eqv? x y)))
+(export make-eqv)
 (define-macro
   (%~ fn . args)
   (receive
@@ -52,10 +61,20 @@
     `(% ,fn
         ,bindings
         ,@(cdr rest))))
-(define loop %~)
+(export %~)
+(define (compliment fn)
+  (lambda x (not (apply fn x))))
+(export compliment)
+(define-public ~ compliment)
+(simple-syntax
+  (with-cc cc a b ...)
+  (call-with-current-continuation
+    (lambda (cc) a b ...)))
+(export with-cc)
 (define-macro
   (for . x)
   (append (quote (%~ for-each)) x))
+(export for)
 (define-method
   (for-each fn (s1 <promise>))
   (stream-for-each fn s1))
@@ -75,70 +94,119 @@
 (define-macro
   (calc-for . x)
   (append (quote (%~ map)) x))
+(export calc-for)
 (simple-syntax
   (do-times count c1 c2 ...)
   (let req ((n count))
     (when (> n 0) (begin c1 c2 ...) (req (1- n)))))
+(export do-times)
 (simple-syntax
   (when cnd c1 c2 ...)
   (if cnd (begin c1 c2 ...) *unspecified*))
+(export when)
 (simple-syntax
   (unless cnd c1 c2 ...)
   (if cnd *unspecified* (begin c1 c2 ...)))
+(export unless)
 (simple-syntax
-  (bind lst (a b ...) c d ...)
+  (bind-vars lst (a b ...) c d ...)
   (receive (a b ...) (apply values lst) c d ...))
+(export bind-vars)
 (define-macro
-  (lambda-bind vars . body)
+  (lambda-bind-vars vars . body)
   (gensyms
     (tmp)
     `(lambda ((unquote tmp))
-       (bind ,tmp
-             ,vars
-             ,@body))))
-(define (output-delimited func delim args)
-  (unless
-    (null? args)
-    (let req ((args args))
-      (func (car args))
-      (let ((tail (cdr args)))
-        (unless (null? tail) (display delim) (req tail))))))
+       (bind-vars
+         ,tmp
+         ,vars
+         ,@body))))
+(export lambda-bind-vars)
 (define (positional-only args)
   (let ((tmp (make-q)))
     (let req ((args args))
       (cond ((null? args) (q->list tmp))
-            ((member
-               (car args)
-               '(#:before #:delim #:after)
-               eq?)
-             (req (cl-cddr args)))
+            ((keyword? (car args)) (req (cl-cddr args)))
             (else (enq! tmp (car args)) (req (cdr args)))))))
+(export positional-only)
 (define*
   (print #:key
+         (port (current-output-port))
+         (func display)
          (before "")
          (delim " ")
          (after "
 ")
          #:rest
          args)
-  (display before)
-  (output-delimited
-    display
-    delim
-    (positional-only args))
-  (display after))
-(define rest cdr)
-(define q->list car)
-(define q-top q-front)
-(define (list->q lst)
+  (display before port)
+  (let ((args (positional-only args)))
+    (unless
+      (null? args)
+      (let req ((args args))
+        (func (car args) port)
+        (let ((tail (cdr args)))
+          (unless
+            (null? tail)
+            (display delim port)
+            (req tail))))))
+  (display after port))
+(export print)
+(define-macro
+  (set-slots! instance . pairs)
+  (unless
+    (symbol? instance)
+    (error "set-slots! requires symbol as it's first argument"))
+  (unless
+    (list? pairs)
+    (error "set-slots! expects list of lists as it's second argument"))
+  (cons 'begin
+        (append
+          (%~ map
+              pair
+              in
+              pairs
+              (if ($ ,(pair? pair)
+                     and
+                     ,(pair? (cdr pair)))
+                (let ((symbol (car pair)) (value (cadr pair)))
+                  (if (symbol? symbol)
+                    `(slot-set!
+                       ,instance
+                       ',symbol
+                       ,value)
+                    (error "set-slots! syntax error")))
+                (error "set-slots! expects list of lists as it's second argument")))
+          `((unquote instance)))))
+(export set-slots!)
+(define-macro
+  (make-instance-and-setup class . initial-vals)
+  (unless
+    (symbol? class)
+    (error "make-instance-and-setup requires class name as it's first argument"))
+  (unless
+    (list? initial-vals)
+    (error "make-instance-and-setup expects list of lists as it's second argument"))
+  (gensyms
+    (result)
+    `(let ((,result
+            (make-instance (unquote class))))
+       (set-slots!
+         ,result
+         ,@initial-vals))))
+(export make-instance-and-setup)
+(define-public rest cdr)
+(define-public q->list car)
+(define-public q-top q-front)
+(define-public
+  (list->q lst)
   (let ((q (cons lst #f))) (sync-q! q) q))
-(define (cl-car x)
+(define-public
+  (cl-car x)
   (if (null? x) (quote ()) (car x)))
-(define (cl-cdr x)
+(define-public
+  (cl-cdr x)
   (if (null? x) (quote ()) (cdr x)))
-(define (symbol-append . lst)
-  (string->symbol
-    (apply string-append (map symbol->string lst))))
 (define-macro
   (cl-c___r ___ x)
   (let* ((lst (map string->symbol
@@ -152,17 +220,18 @@
   (define-cl-c___rs a b)
   (let ((result (make-q)))
     (enq! result (quote begin))
-    (let req ((level 0) (str ""))
-      (if (>= level a)
-        (let* ((symbol (string->symbol str))
-               (full-name
-                 (symbol-append (quote cl-c) symbol (quote r))))
-          (enq! result
-                `(define ((unquote full-name) __x__)
-                   (cl-c___r (unquote symbol) __x__)))))
+    (let req ((level 0) (mid-symbol (quote #{}#)))
+      (when (>= level a)
+            (enq! result
+                  `(define-public
+                     (,(symbol-append (quote cl-c) mid-symbol (quote r))
+                      __x__)
+                     (cl-c___r (unquote mid-symbol) __x__))))
       (when (< level b)
-            (req (1+ level) (string-append str "a"))
-            (req (1+ level) (string-append str "d"))))
+            (req (1+ level)
+                 (symbol-append mid-symbol (quote a)))
+            (req (1+ level)
+                 (symbol-append mid-symbol (quote d)))))
     (q->list result)))
 (define-cl-c___rs 2 5)
 (define (range a b)
@@ -172,8 +241,142 @@
         (cons state (1+ state))
         '()))
     a))
+(export range)
 (define (list-range a b)
   (stream->list (range a b)))
+(export list-range)
+(define-macro
+  (define-nth-fn fn)
+  (let ((fun-name (symbol-append (quote nth-) fn)))
+    (gensyms
+      (lst i)
+      `(define-public
+         ((unquote fun-name) (unquote lst) (unquote i))
+         (if (zero? (unquote i))
+           ((unquote fn) (unquote lst))
+           (,fun-name
+            (cdr (unquote lst))
+            (1- (unquote i))))))))
+(define-nth-fn car)
+(define-nth-fn cdr)
+(define-nth-fn car+cdr)
+(simple-syntax
+  (m->fn m)
+  (lambda x (primitive-eval (cons m x))))
+(export m->fn)
+(define (none . args) (not (apply any args)))
+(export none)
+(define-public any? any)
+(define-public every? every)
+(define-public none? none)
+(define (-- x) (- x))
+(define ^ expt)
+(define (!= . args) (not (apply = args)))
+(define (<=> . args)
+  (cond ((apply < args) -1)
+        ((apply = args) 0)
+        (else 1)))
+(define *smile-dollar-functions*
+  '(sin cos tan exp fact sqrt -- truncate))
+(define *smile-dollar-operator-precedence*
+  '((%function-application)
+    (^)
+    (* /)
+    (+ -)
+    (= < > <= >= != <=>)
+    (%negation)
+    (or and)))
+(define (infix->prefix lst)
+  (define (left-associative? operator)
+    (not (member
+           operator
+           '(^ %function-application))))
+  (define (operator-priority operator)
+    (let loop ((answer 1)
+               (part *smile-dollar-operator-precedence*))
+      (cond ((null? part) #f)
+            ((member operator (car part)) answer)
+            (else (loop (1+ answer) (cdr part))))))
+  (define (operator? x) (operator-priority x))
+  (define (function? x)
+    (member x *smile-dollar-functions*))
+  (define (negation? x) (eqv? x (quote not)))
+  (define (operator-first? s c)
+    (let ((ops (operator-priority s))
+          (opc (operator-priority c)))
+      (or (< ops opc)
+          (and (= ops opc) (left-associative? s)))))
+  (let ((operators (make-q)) (stack (make-q)))
+    (define (step)
+      (let ((b (q-pop! stack))
+            (a (q-pop! stack))
+            (o (q-pop! operators)))
+        (cond ((eqv? o (quote %function-application))
+               (q-push! stack (list a b)))
+              ((eqv? o (quote %negation))
+               (q-push! stack (list a b)))
+              (else (q-push! stack (list o a b))))))
+    (do ((args lst (cdr args)))
+        ((null? args)
+         (let reduce ()
+           (if (q-empty? operators)
+             (q-top stack)
+             (begin (step) (reduce)))))
+      (let ((current (car args)))
+        (cond ((pair? current)
+               (if (member (car current) (quote (quote unquote)))
+                 (q-push! stack (cadr current))
+                 (q-push! stack (infix->prefix current))))
+              ((operator? current)
+               (while (and (not (q-empty? operators))
+                           (<= 2 (q-length stack))
+                           (operator-first? (q-top operators) current))
+                      (step))
+               (q-push! operators current))
+              ((function? current)
+               (q-push! stack current)
+               (q-push! operators (quote %function-application)))
+              ((negation? current)
+               (q-push! stack current)
+               (q-push! operators (quote %negation)))
+              (else (q-push! stack current)))))))
+(define (repair-unary-minus arg)
+  (define oper-fun
+    (append
+      (apply append
+             (cdr *smile-dollar-operator-precedence*))
+      *smile-dollar-functions*))
+  (let ((q (make-q)))
+    (let loop ((start #t) (lst arg))
+      (if (null? lst)
+        (q->list q)
+        (let ((x (car lst)))
+          (cond ((and (pair? x)
+                      (not (eqv? (quote quote) (car x))))
+                 (enq! q (repair-unary-minus x)))
+                ((and start (eqv? (quote -) (car lst)))
+                 (enq! q (quote --)))
+                (else (enq! q (car lst))))
+          (loop (member x oper-fun) (cdr lst)))))))
+(define (math->prefix args)
+  (infix->prefix (repair-unary-minus args)))
+(define-macro ($ . args) (math->prefix args))
+(define-module (smile internals))
+(use-modules
+  (oop goops)
+  (srfi srfi-1)
+  (srfi srfi-34)
+  (ice-9 pretty-print)
+  (ice-9 rdelim)
+  (ice-9 readline)
+  (ice-9 buffered-input)
+  (ice-9 streams)
+  (ice-9 q)
+  (ice-9 receive)
+  (ice-9 optargs)
+  (ice-9 format)
+  (ice-9 syncase)
+  (smile std))
 (define (lexer-error lexer . args)
   (define (str arg) (format #f "~a" arg))
   (raise (list 'lexer-error
@@ -220,16 +423,19 @@
           port
           #:interactive?
           interactive)))
+(export copy-lexer)
 (define-macro
   (reset-lexer lexer)
   `(set! ,lexer
      (copy-lexer (unquote lexer))))
+(export reset-lexer)
 (define (setup-lexer port interactive)
   (make <lexer>
         #:port
         port
         #:interactive?
         interactive))
+(export setup-lexer)
 (define (read-token lexer)
   (let ((port (lexer-port lexer)))
     (define (on-empty-line?)
@@ -248,7 +454,7 @@
     (define separators
       (char-set-union
         (apply char-set (map first *brace-tokens*))
-        (char-set #\space #\newline #\ht #\")))
+        (char-set #\space #\newline #\ht #\" #\;)))
     (define (separator? chr)
       (char-set-contains? separators chr))
     (define (read-until-predicate pred result)
@@ -272,8 +478,8 @@
                (cdr (lexer-braces lexer))))
             (else (lexer-error lexer "incompatible braces"))))
     (define (on-flat?)
-      (or (not (on-empty-line?))
-          (null? (lexer-braces lexer))))
+      (and (not (on-empty-line?))
+           (null? (lexer-braces lexer))))
     (define (read-slash)
       (let ((chr (read-char port)))
         (cond ((char=? chr #\newline) (eat-whitespace))
@@ -298,14 +504,12 @@
                  (begin (unread-char tmp port) COMMA))))
             ((assoc chr *brace-tokens*)
              =>
-             (lambda (tmp)
-               (receive
-                 (chr token type open)
-                 (apply values tmp)
-                 (if open
-                   (open-parenthesis type)
-                   (close-parenthesis type))
-                 token)))
+             (lambda-bind-vars
+               (chr token type open)
+               (if open
+                 (open-parenthesis type)
+                 (close-parenthesis type))
+               token))
             (else
              (string->thing
                (read-until-predicate separator? (list chr))))))
@@ -322,40 +526,39 @@
     (define (start-new-line)
       (if (on-empty-line?)
         (eat-whitespace)
-        (begin
-          (let position ()
-            (let ((chr (read-char port)))
-              (cond ((eof-object? chr) (do-at-eof))
-                    ((and (char=? chr #\newline)
-                          (= 0 (port-column port))
-                          (lexer-interactive? lexer))
-                     (do-at-eof))
-                    ((char-whitespace? chr) (position))
-                    (else
-                     (set-on-empty-line! #t)
-                     (unread-char chr port)
-                     (let ((col (port-column port)))
-                       (cond ((> col (first (indentation)))
-                              (add-to-indentation col)
-                              (enq! (token-buffer) INDENT))
-                             ((member col (indentation))
-                              =>
-                              (lambda (whats-left)
-                                (let ((prev-len (length (indentation)))
-                                      (curr-len (length whats-left)))
-                                  (set-indentation! whats-left)
-                                  (do ((countdown
-                                         (- prev-len curr-len)
-                                         (1- countdown)))
-                                      ((= countdown 0))
-                                    (enq! (token-buffer) DEDENT)))))
-                             (else
-                              (lexer-error
-                                lexer
-                                "bad indentation"
-                                col
-                                (indentation)))))
-                     ENDLINE)))))))
+        (let position ()
+          (let ((chr (read-char port)))
+            (cond ((eof-object? chr) (do-at-eof))
+                  ((and (char=? chr #\newline)
+                        (= 0 (port-column port))
+                        (lexer-interactive? lexer))
+                   (do-at-eof))
+                  ((char-whitespace? chr) (position))
+                  (else
+                   (set-on-empty-line! #t)
+                   (unread-char chr port)
+                   (let ((col (port-column port)))
+                     (cond ((> col (first (indentation)))
+                            (add-to-indentation col)
+                            (enq! (token-buffer) INDENT))
+                           ((member col (indentation))
+                            =>
+                            (lambda (whats-left)
+                              (let ((prev-len (length (indentation)))
+                                    (curr-len (length whats-left)))
+                                (set-indentation! whats-left)
+                                (do ((countdown
+                                       (- prev-len curr-len)
+                                       (1- countdown)))
+                                    ((= countdown 0))
+                                  (enq! (token-buffer) DEDENT)))))
+                           (else
+                            (lexer-error
+                              lexer
+                              "bad indentation"
+                              col
+                              (indentation)))))
+                   ENDLINE))))))
     (define (read-part)
       (let ((chr (quote _)))
         (let pre-loop ()
@@ -402,14 +605,17 @@
     (if (q-empty? (token-buffer))
       (eat-whitespace)
       (deq! (token-buffer)))))
+(export read-token)
 (define (unread-token lexer tkn)
   (q-push! (lexer-token-buffer lexer) tkn))
+(export unread-token)
 (define-class <token> () (type))
 (define-method
   (initialize (tkn <token>) args)
-  (bind args
-        (val)
-        (slot-set! tkn (quote type) val)))
+  (bind-vars
+    args
+    (val)
+    (slot-set! tkn (quote type) val)))
 (define-method
   (write (tkn <token>) (port <port>))
   (display
@@ -602,7 +808,9 @@
     (define (parse-list-of-lines)
       (kleene-plus parse-line))
     (true-procedure-body)))
+(export parse)
 (define setup-parser setup-lexer)
+(export setup-parser)
 (define (load-smile file)
   (with-input-from-file
     file
@@ -615,98 +823,13 @@
             (eqv? parsed EOF)
             (primitive-eval parsed)
             (grande-lupe)))))))
-(define (-- x) (- x))
-(define ^ expt)
-(define (!= . args) (not (apply = args)))
-(define (<=> . args)
-  (cond ((apply < args) -1)
-        ((apply = args) 0)
-        (else 1)))
-(define *smile-dollar-functions*
-  '(sin cos tan exp fact sqrt -- truncate))
-(define *smile-dollar-operator-precedence*
-  '((%function-application)
-    (^)
-    (* /)
-    (+ -)
-    (= < > <= >= != <=>)
-    (%negation)
-    (or and)))
-(define (infix->prefix lst)
-  (define (left-associative? operator)
-    (not (member
-           operator
-           '(^ %function-application))))
-  (define (operator-priority operator)
-    (let loop ((answer 1)
-               (part *smile-dollar-operator-precedence*))
-      (cond ((null? part) #f)
-            ((member operator (car part)) answer)
-            (else (loop (1+ answer) (cdr part))))))
-  (define (operator? x) (operator-priority x))
-  (define (function? x)
-    (member x *smile-dollar-functions*))
-  (define (negation? x) (eqv? x (quote not)))
-  (define (operator-first? s c)
-    (let ((ops (operator-priority s))
-          (opc (operator-priority c)))
-      (or (< ops opc)
-          (and (= ops opc) (left-associative? s)))))
-  (let ((operators (make-q)) (stack (make-q)))
-    (define (step)
-      (let ((b (q-pop! stack))
-            (a (q-pop! stack))
-            (o (q-pop! operators)))
-        (cond ((eqv? o (quote %function-application))
-               (q-push! stack (list a b)))
-              ((eqv? o (quote %negation))
-               (q-push! stack (list a b)))
-              (else (q-push! stack (list o a b))))))
-    (do ((args lst (cdr args)))
-        ((null? args)
-         (let reduce ()
-           (if (q-empty? operators)
-             (q-top stack)
-             (begin (step) (reduce)))))
-      (let ((current (car args)))
-        (cond ((pair? current)
-               (if (member (car current) (quote (quote unquote)))
-                 (q-push! stack (cadr current))
-                 (q-push! stack (infix->prefix current))))
-              ((operator? current)
-               (while (and (not (q-empty? operators))
-                           (<= 2 (q-length stack))
-                           (operator-first? (q-top operators) current))
-                      (step))
-               (q-push! operators current))
-              ((function? current)
-               (q-push! stack current)
-               (q-push! operators (quote %function-application)))
-              ((negation? current)
-               (q-push! stack current)
-               (q-push! operators (quote %negation)))
-              (else (q-push! stack current)))))))
-(define (repair-unary-minus arg)
-  (define oper-fun
-    (append
-      (apply append
-             (cdr *smile-dollar-operator-precedence*))
-      *smile-dollar-functions*))
-  (let ((q (make-q)))
-    (let loop ((start #t) (lst arg))
-      (if (null? lst)
-        (q->list q)
-        (let ((x (car lst)))
-          (cond ((and (pair? x)
-                      (not (eqv? (quote quote) (car x))))
-                 (enq! q (repair-unary-minus x)))
-                ((and start (eqv? (quote -) (car lst)))
-                 (enq! q (quote --)))
-                (else (enq! q (car lst))))
-          (loop (member x oper-fun) (cdr lst)))))))
-(define (math->prefix args)
-  (infix->prefix (repair-unary-minus args)))
-(define-macro ($ . args) (math->prefix args))
+(use-modules
+  (smile std)
+  (smile internals)
+  (ice-9 pretty-print)
+  (ice-9 rdelim)
+  (ice-9 readline)
+  (ice-9 buffered-input))
 (define (translate)
   (define *parser*
     (setup-parser (current-input-port) #f))

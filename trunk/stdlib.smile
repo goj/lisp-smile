@@ -1,3 +1,12 @@
+define-module | smile std
+use-syntax | ice-9 syncase
+use-modules
+  oop goops
+  ice-9 receive
+  srfi srfi-1 ; list stuff
+  ice-9 optargs
+  ice-9 q
+
 define-macro | simple-syntax header . body
   let 
     \ name     | car header
@@ -9,42 +18,62 @@ define-macro | simple-syntax header . body
           syntax-case ,x |
             \ _ ,@bindings
               syntax ,@body
+export simple-syntax
 
 define-macro | gensyms a . rest
   unless | list? a
-    error "gensyms expects list of symbols as its first argument"
+    error "gensyms expects list of symbols as it's first argument"
   quasiquote
     let
       unquote
         %~ map i in a
           list i '(gensym)
       unquote-splicing rest
+export gensyms
+
+define-macro | with woot arg . thunk
+  let || with-woot | symbol-append 'with- woot
+    quasiquote
+      ,with-woot arg
+        lambda [] ,@thunk
+export with
 
 simple-syntax | %% fn (x y ...) (a b ...) c1 c2 ...
   fn [lambda (x y ...) c1 c2 ...] a b ...
+export %%
 
 define-macro | % fn bindings . rest
   receive [collections body] | split-at rest | length bindings
     quasiquote
       %% ,fn ,bindings ,collections ,@body
+export %
 
 define | make-eqv y
   lambda | x
     eqv? x y
+export make-eqv
 
 define-macro | %~ fn . args
   receive [bindings rest] | break! [make-eqv 'in] args
     quasiquote
       % ,fn ,bindings ,@[cdr rest]
+export %~
 
-define loop %~
+define | compliment fn
+  lambda x
+    not | apply fn x
+export compliment
+
+define-public ~ compliment
 
 simple-syntax | with-cc cc a b ...
   call-with-current-continuation
     lambda [cc] a b ...
+export with-cc
 
 define-macro | for . x
   append '(%~ for-each) x
+export for
 
 define-method | for-each fn [s1 <promise>]
   stream-for-each fn s1
@@ -60,31 +89,38 @@ define-method | for-each fn [s1 <hashtable>]
 
 define-macro | calc-for . x
   append '(%~ map) x
+export calc-for
 
 simple-syntax | do-times count c1 c2 ...
   let req || n count
     when | > n 0
       begin c1 c2 ...
       req | 1- n
+export do-times
 
 simple-syntax | when cnd c1 c2 ...
   if cnd
     begin c1 c2 ...
     . *unspecified*
+export when
 
 simple-syntax | unless cnd c1 c2 ...
   if cnd
     . *unspecified*
     begin c1 c2 ...
+export unless
 
-simple-syntax | bind lst (a b ...) c d ...
+simple-syntax | bind-vars lst (a b ...) c d ...
   receive (a b ...) (apply values lst) c d ...
+export bind-vars
+  
 
-define-macro | lambda-bind vars . body
+define-macro | lambda-bind-vars vars . body
   gensyms | tmp
     quasiquote
       lambda | ,tmp
-        bind ,tmp ,vars ,@body
+        bind-vars ,tmp ,vars ,@body
+export lambda-bind-vars
   
 define | positional-only args
   let || tmp | make-q
@@ -97,6 +133,7 @@ define | positional-only args
         else
           enq! tmp | car args
           req | cdr args
+export positional-only
   
 define* | print #:key [port | current-output-port] [func display] [before ""] [delim " "] [after "\n"] #:rest args
   display before port
@@ -109,20 +146,27 @@ define* | print #:key [port | current-output-port] [func display] [before ""] [d
             display delim port
             req tail
   display after port
+export print
 
 define-macro | set-slots! instance . pairs
   unless | symbol? instance
     error "set-slots! requires symbol as it's first argument"
-  unless | list? instance
-    error "set-fields! expects list of lists as it's second argument"
+  unless | list? pairs
+    error "set-slots! expects list of lists as it's second argument"
   cons 'begin
     append
       %~ map pair in pairs
-        if | pair? pair
-          quasiquote
-            slot-set! ,instance ',[car pair] ,@[cdr pair]
-          error "set-fields! expects list of lists as it's second argument"
+        if | $ ,[pair? pair] and ,[pair? | cdr pair]
+          let
+            \ symbol | car pair
+              value  | cadr pair
+            if | symbol? symbol
+              quasiquote
+                slot-set! ,instance ',symbol ,value
+              error "set-slots! syntax error"
+          error "set-slots! expects list of lists as it's second argument"
       . `(,instance)
+export set-slots!
 
 
 define-macro | make-instance-and-setup class . initial-vals
@@ -133,30 +177,28 @@ define-macro | make-instance-and-setup class . initial-vals
   gensyms | result
     quasiquote
       let || ,result | make-instance ,class
-        set-slots! ,result ,initial-vals
+        set-slots! ,result ,@initial-vals
+export make-instance-and-setup
 
 
-define rest cdr
+define-public rest cdr
 
-define q->list car
-define q-top q-front
-define | list->q lst
+define-public q->list car
+define-public q-top q-front
+define-public | list->q lst
   let || q | cons lst #f
     sync-q! q
     . q
 
-define | cl-car x
+define-public | cl-car x
   if | null? x
     . '()
     car x
 
-define | cl-cdr x
+define-public | cl-cdr x
   if | null? x
     . '()
     cdr x
-
-define | symbol-append . lst
-  string->symbol | apply string-append | map symbol->string lst
 
 define-macro | cl-c___r ___ x
   let* || lst | map string->symbol | map string | string->list | symbol->string ___
@@ -175,7 +217,7 @@ define-macro | define-cl-c___rs a b
       when | >= level a
         enq! result
           quasiquote
-            define | ,[symbol-append 'cl-c mid-symbol 'r] __x__
+            define-public | ,[symbol-append 'cl-c mid-symbol 'r] __x__
               cl-c___r ,mid-symbol __x__
       when | < level b
         req [1+ level] [symbol-append mid-symbol 'a]
@@ -190,15 +232,17 @@ define | range a b
         cons state | 1+ state
         . '()
     . a
+export range
 
 define | list-range a b
   stream->list | range a b
+export list-range
 
 define-macro | define-nth-fn fn
   let || fun-name | symbol-append 'nth- fn
     gensyms | lst i
       quasiquote
-        define | ,fun-name ,lst ,i
+        define-public | ,fun-name ,lst ,i
           if | zero? ,i
             ,fn ,lst
             ,fun-name [cdr ,lst] [1- ,i]
@@ -210,35 +254,14 @@ define-nth-fn car+cdr
 simple-syntax | m->fn m
   lambda x
     primitive-eval | cons m x
+export m->fn
     
 define | none . args
   not | apply any args
+export none
 
-define any?   any
-define every? every
-define none?  none
+define-public any?   any
+define-public every? every
+define-public none?  none
 
 
-#|
-define-syntax loop
-  lambda | x
-    syntax-case x | in
-      \ _ function i in lst c1 c2 ...
-        syntax
-          function
-            lambda [i] c1 c2 ...
-            . lst
-      \ _ function i j in lst1 lst2 c1 c2 ...
-        syntax
-          function
-            lambda [i j] c1 c2 ...
-            . lst1
-            . lst2
-      \ _ function i j k in lst1 lst2 lst3 c1 c2 ...
-        syntax
-          function
-            lambda [i j k] c1 c2 ...
-            . lst1
-            . lst2
-            . lst3
-|#

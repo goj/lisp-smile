@@ -1,4 +1,11 @@
 load "smile.scm"
+use-modules
+  smile std
+  smile internals
+  ice-9 pretty-print
+  ice-9 rdelim
+  ice-9 readline
+  ice-9 buffered-input
 
 define | translate
   define *parser* | setup-parser [current-input-port] #f

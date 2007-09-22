@@ -22,13 +22,16 @@ define | copy-lexer parser
   let \\ port        | lexer-port parser
          interactive | lexer-interactive? parser
        make <lexer> #:port port #:interactive? interactive
+export copy-lexer
        
 define-macro | reset-lexer lexer
   quasiquote
     set! ,lexer | copy-lexer ,lexer
+export reset-lexer
 
 define | setup-lexer port interactive
   make <lexer> #:port port #:interactive? interactive
+export setup-lexer
 
 define | read-token lexer
   let || port | lexer-port lexer
@@ -125,7 +128,7 @@ define | read-token lexer
                unread-char tmp port
                . COMMA
         [ assoc chr *brace-tokens* ] =>
-          lambda-bind | chr token type open
+          lambda-bind-vars | chr token type open
             if open
               open-parenthesis type
               close-parenthesis type
@@ -237,8 +240,10 @@ define | read-token lexer
     if | q-empty? [token-buffer]
       eat-whitespace
       deq! [token-buffer]
+export read-token
 
 define | unread-token lexer tkn
   q-push! [lexer-token-buffer lexer] tkn
+export unread-token
 
 

@@ -235,3 +235,19 @@ export parse
 
 define setup-parser setup-lexer
 export setup-parser
+
+define-module | smile load_smile
+define | load-smile file
+  with-input-from-file file
+    lambda |
+      let*
+        \ parse-smile      | @ [smile internals] parse
+          __EOF__          | @@ [smile internals] EOF
+          __setup-parser__ | @ [smile internals] setup-parser
+          *parser* | __setup-parser__ [current-input-port] #f
+        let grande-lupe |
+          let || parsed | parse-smile *parser*
+            unless | eqv? parsed __EOF__
+              primitive-eval parsed
+              grande-lupe
+export load-smile

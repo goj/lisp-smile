@@ -263,5 +263,3 @@ export none
 define-public any?   any
 define-public every? every
 define-public none?  none
-
-

@@ -2,7 +2,7 @@
 TRANSLATOR=guile translator.scm
 all: smile.scm new-translator.scm interpreter.scm shell.scm
 
-smile.scm: stdlib.smile dollar.smile smile-use-modules.smile lexer.smile parser.smile load-smile.smile
+smile.scm: stdlib.smile dollar.smile smile-use-modules.smile lexer.smile parser.smile
 	rm -f $@
 	for i in $^; do cat $$i  | grep -v '^load' | $(TRANSLATOR) >> $@;  done
 	echo "(set-current-module ( resolve-module '(guile)))"

@@ -1,9 +1,0 @@
-define | load-smile file
-  with-input-from-file file
-    lambda |
-      define *parser* | setup-parser [current-input-port] #f
-      let grande-lupe |
-        let || parsed | parse *parser*
-          unless | eqv? parsed EOF
-            primitive-eval parsed
-            grande-lupe
